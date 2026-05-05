@@ -4,6 +4,7 @@ import { ArrowLeft, TrendingUp, TrendingDown, Bell } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { provider } from "@/lib/market-data/router";
+import { findOrCreateStock } from "@/lib/stocks/lazy-create";
 import { modifiedPEG, fairPE, lynchFairValue } from "@/lib/lynch/score";
 import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT } from "@/lib/alerts/evaluator";
 import { LynchCard } from "@/components/stock/lynch-card";
@@ -27,10 +28,9 @@ export default async function StockDetailPage({
   const { symbol: rawSymbol } = await params;
   const symbol = decodeURIComponent(rawSymbol).toUpperCase();
 
-  const stock = await prisma.stock.findUnique({
-    where: { symbol },
-    include: { fundamentals: true },
-  });
+  // Look up the stock — if it's not in our DB yet, lazy-create it from Yahoo
+  // (so subsequent watchlist / alert / portfolio operations work).
+  const stock = await findOrCreateStock(symbol);
   if (!stock) notFound();
 
   const f = stock.fundamentals;

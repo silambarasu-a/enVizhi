@@ -5,6 +5,7 @@ import type {
   NormalizedQuote,
   OHLCBar,
   OHLCRange,
+  SearchMatch,
 } from "./types";
 
 // yahoo-finance2 v3 requires explicit instantiation (was a singleton in v2).
@@ -156,7 +157,74 @@ export const yahooProvider: MarketDataProvider = {
     }
     return Number(arr.regularMarketPrice);
   },
+
+  async search(query) {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+
+    const result = (await yahooFinance.search(trimmed, {
+      quotesCount: 20,
+      newsCount: 0,
+    })) as {
+      quotes?: Array<{
+        symbol?: string;
+        shortname?: string;
+        longname?: string;
+        exchange?: string;
+        exchangeDisplay?: string;
+        currency?: string;
+        quoteType?: string;
+        isYahooFinance?: boolean;
+      }>;
+    };
+
+    const quotes = result.quotes ?? [];
+    return quotes
+      .filter((q) => q.symbol && (q.quoteType === "EQUITY" || q.quoteType === "ETF"))
+      .map<SearchMatch>((q) => {
+        const ex = normalizeYahooExchange(q.exchange);
+        return {
+          symbol: q.symbol!,
+          name: q.longname ?? q.shortname ?? q.symbol!,
+          exchange: ex.label,
+          currency: q.currency ?? null,
+          isSupported: ex.supported,
+        };
+      });
+  },
 };
+
+/** Map Yahoo's cryptic exchange codes to a friendly label + whether it
+ *  matches one of our supported `Exchange` enum values. */
+function normalizeYahooExchange(code: string | undefined): { label: string; supported: boolean } {
+  switch (code) {
+    case "NMS":
+    case "NCM":
+    case "NGM":
+      return { label: "NASDAQ", supported: true };
+    case "NYQ":
+      return { label: "NYSE", supported: true };
+    case "ASE":
+      return { label: "AMEX", supported: false };
+    case "PCX":
+      return { label: "NYSE Arca", supported: false };
+    case "NSI":
+      return { label: "NSE", supported: true };
+    case "BSE":
+    case "BOM":
+      return { label: "BSE", supported: true };
+    case "LSE":
+      return { label: "LSE", supported: false };
+    case "TOR":
+      return { label: "TSX", supported: false };
+    case "HKG":
+      return { label: "HKEX", supported: false };
+    case "FRA":
+      return { label: "Frankfurt", supported: false };
+    default:
+      return { label: code ?? "—", supported: false };
+  }
+}
 
 interface RawQuote {
   symbol: string;

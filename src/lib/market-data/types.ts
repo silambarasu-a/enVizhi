@@ -52,6 +52,20 @@ export interface OHLCBar {
 
 export type OHLCRange = "1mo" | "3mo" | "6mo" | "1y" | "5y";
 
+/** Search match returned from the upstream universe (Yahoo today). Lighter
+ *  than a full Stock row — used by the ⌘K modal so users discover any ticker. */
+export interface SearchMatch {
+  symbol: string;
+  name: string;
+  /** Pretty exchange label: NASDAQ, NYSE, NSE, BSE, AMEX, LSE, TSX, etc. */
+  exchange: string;
+  /** ISO currency or null if Yahoo didn't tell us. */
+  currency: string | null;
+  /** True when this exchange maps to one of our supported `Exchange` enum
+   *  values — lets the stock-detail page lazy-create a Stock row safely. */
+  isSupported: boolean;
+}
+
 export interface MarketDataProvider {
   name: string;
   getQuote(symbol: string): Promise<NormalizedQuote>;
@@ -59,4 +73,5 @@ export interface MarketDataProvider {
   getFundamentals(symbol: string): Promise<NormalizedFundamentals>;
   getOHLC(symbol: string, range: OHLCRange): Promise<OHLCBar[]>;
   getFXRate(base: string, quote: string): Promise<number>;
+  search(query: string): Promise<SearchMatch[]>;
 }
