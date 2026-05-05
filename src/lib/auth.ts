@@ -6,7 +6,6 @@ import { compare } from "bcryptjs";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/prisma";
 import { sendMagicLinkEmail } from "@/lib/auth-email";
-import { seedDefaultWatchlists } from "@/lib/onboarding";
 
 const SMTP_HOST = process.env.SMTP_HOST;
 const SMTP_PORT = process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587;
@@ -144,14 +143,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
   },
   events: {
-    async createUser({ user }) {
-      if (!user.id) return;
-      try {
-        await seedDefaultWatchlists(user.id);
-      } catch (err) {
-        console.error("[onboarding] failed to seed default watchlists:", err);
-      }
-    },
     /**
      * Auto-mark `emailVerified` for OAuth providers that have already verified
      * the email themselves (Google requires email verification before issuing

@@ -8,8 +8,6 @@
     "postinstall": "prisma generate",
     "start": "next start -p 3005",
     "lint": "eslint",
-    "test": "vitest run",
-    "test:watch": "vitest",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
@@ -58,7 +56,6 @@
     "shadcn": "^4.2.0",
     "tailwindcss": "^4",
     "tsx": "^4.20.0",
-    "typescript": "^5",
-    "vitest": "^2.1.9"
+    "typescript": "^5"
   }
 }

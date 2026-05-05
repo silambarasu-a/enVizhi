@@ -41,36 +41,26 @@ export interface ScreenerResult {
 }
 
 /**
- * Run the screener scoped to a user's accumulated universe.
+ * Run the screener against the entire shared Stock pool.
  *
- *   "Universe" = stocks the user has touched: in any of their watchlists,
- *   referenced by any of their portfolio transactions, or with an active
- *   alert. The fully-live rewrite removed the seeded global universe, so the
- *   screener works against this personal-but-growing set.
+ *   The fully-live rewrite removed the seeded global universe, so the Stock
+ *   table only ever contains tickers someone has actually interacted with —
+ *   ⌘K-clicked, watchlist-added, portfolio-traded, alert-set, or imported via
+ *   Discover. We treat that pool as the screener's universe rather than
+ *   filtering down to per-user relations, because the alternative
+ *   (auto-creating a "Discoveries" watchlist on import) leaks an organization
+ *   construct the user never asked for.
  *
- *   Discover-panel actions (e.g. clicking "Most Active") add stocks to this
- *   set by lazy-creating Stock rows + their fundamentals — at which point
- *   they show up here on the next refresh.
+ *   `userId` is accepted for future per-tenant scoping (e.g. when this becomes
+ *   multi-tenant SaaS) but currently unused.
  */
 export async function runScreener(
   filter: ScreenerFilter,
-  userId: string,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _userId: string,
 ): Promise<ScreenerResult> {
-  const baseWhere = buildStockWhere(filter);
+  const where = buildStockWhere(filter);
   const orderBy = buildOrderBy(filter.sort, filter.dir);
-
-  const where = {
-    AND: [
-      baseWhere,
-      {
-        OR: [
-          { watchlistItems: { some: { watchlist: { userId } } } },
-          { transactions: { some: { portfolio: { userId } } } },
-          { alerts: { some: { userId } } },
-        ],
-      },
-    ],
-  };
 
   const [rows, total] = await Promise.all([
     prisma.stock.findMany({
@@ -117,17 +107,14 @@ export async function runScreener(
   };
 }
 
-/** Sector list, scoped to the user's accumulated universe. */
-export async function listSectors(userId: string): Promise<string[]> {
+/** Sector list across the shared Stock pool. `userId` accepted for future
+ *  per-tenant scoping; currently unused (matches `runScreener`). */
+export async function listSectors(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _userId: string,
+): Promise<string[]> {
   const rows = await prisma.stock.findMany({
-    where: {
-      sector: { not: null },
-      OR: [
-        { watchlistItems: { some: { watchlist: { userId } } } },
-        { transactions: { some: { portfolio: { userId } } } },
-        { alerts: { some: { userId } } },
-      ],
-    },
+    where: { sector: { not: null } },
     select: { sector: true },
     distinct: ["sector"],
     orderBy: { sector: "asc" },

@@ -21,13 +21,15 @@ const VALID_SCREENS = new Set<ScreenId>([
 
 /**
  * Pull a Yahoo predefined screen and import the matching tickers into the
- * user's universe. Each match is funneled through `findOrCreateStock` so
- * fundamentals + Lynch fields land in one shot.
+ * shared Stock universe.
  *
- * Concurrency capped at 4 — Yahoo gets unhappy past ~5 RPS sustained.
+ *   - Lazy-creates Stock + StockFundamentals rows for every supported match.
+ *   - Does NOT auto-add anything to a user watchlist (importing is for
+ *     discovery; watchlists are a user-driven organization layer that the
+ *     user opts into explicitly).
  *
- * Returns the count actually imported (vs already-known) so the caller can
- * surface a toast like "Added 18 new stocks from Most Active".
+ * Returns counts so the caller can surface a toast like
+ * "Imported 18 new, 7 already known" in the Discover panel.
  */
 export async function importYahooScreen(formData: FormData) {
   const session = await auth();
@@ -41,7 +43,8 @@ export async function importYahooScreen(formData: FormData) {
   const matches = await provider.runScreen(id, { count: 25 }).catch(() => []);
   const supported = matches.filter((m) => m.isSupported);
 
-  // Skip the lazy-create dance for symbols already in DB to keep this fast.
+  // Skip stocks already in DB to keep this fast — we only need to lazy-create
+  // the new ones.
   const existingSymbols = new Set(
     (
       await prisma.stock.findMany({
@@ -63,44 +66,8 @@ export async function importYahooScreen(formData: FormData) {
     ),
   );
 
-  // For known symbols + newly-created ones alike: ensure they're in a
-  // synthetic "Discoveries" watchlist so they show up in the screener.
-  const discoveryListName = "Discoveries";
-  let discoveryList = await prisma.watchlist.findFirst({
-    where: { userId: session.user.id, name: discoveryListName },
-    select: { id: true },
-  });
-  if (!discoveryList) {
-    discoveryList = await prisma.watchlist.create({
-      data: { userId: session.user.id, name: discoveryListName, sortOrder: 999 },
-      select: { id: true },
-    });
-  }
-
-  const allStockIds = [
-    ...(
-      await prisma.stock.findMany({
-        where: { symbol: { in: supported.map((m) => m.symbol) } },
-        select: { id: true },
-      })
-    ).map((s) => s.id),
-    ...results.filter((s): s is NonNullable<typeof s> => !!s).map((s) => s.id),
-  ];
-
-  // Idempotent inserts thanks to the unique constraint on (watchlistId, stockId).
-  await Promise.all(
-    Array.from(new Set(allStockIds)).map((stockId) =>
-      prisma.watchlistItem
-        .create({ data: { watchlistId: discoveryList!.id, stockId } })
-        .catch(() => {
-          /* already there — ignore */
-        }),
-    ),
-  );
-
   revalidatePath("/screener");
   revalidatePath("/dashboard");
-  revalidatePath("/watchlists");
 
   const newCount = results.filter(Boolean).length;
   return {

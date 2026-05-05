@@ -8,7 +8,6 @@ import { revalidatePath } from "next/cache";
 import { auth, signIn } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendPasswordResetEmail, sendVerificationEmail } from "@/lib/auth-email";
-import { seedDefaultWatchlists } from "@/lib/onboarding";
 import {
   checkSigninLockout,
   clearSigninFailures,
@@ -122,13 +121,6 @@ export async function signUpWithPassword(formData: FormData) {
       // emailVerified stays null until they click the verify link.
     },
   });
-
-  // Credentials provider doesn't trigger NextAuth's `events.createUser`, so seed manually.
-  try {
-    await seedDefaultWatchlists(user.id);
-  } catch (err) {
-    console.error("[onboarding] seed failed during signup:", err);
-  }
 
   // Fire-and-log the verification email — never block signup on a mail failure.
   await issueVerificationEmail(user.id, email).catch((err) => {
