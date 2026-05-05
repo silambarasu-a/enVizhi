@@ -1,6 +1,8 @@
 import YahooFinance from "yahoo-finance2";
 import type {
   MarketDataProvider,
+  MarketMovers,
+  MoverEntry,
   NormalizedFundamentals,
   NormalizedQuote,
   OHLCBar,
@@ -9,8 +11,78 @@ import type {
   SearchMatch,
 } from "./types";
 
+/**
+ * NIFTY 50 components (Indian large caps). Used as the universe for India's
+ * "Top gainers / losers" cards because Yahoo's predefined `day_gainers` /
+ * `day_losers` screens are US-locked (the `region` param doesn't filter them
+ * server-side). Names are baked in so we don't need a second metadata fetch.
+ *
+ * Refresh annually — index reconstitution typically swaps a handful of names.
+ */
+const NIFTY_50: ReadonlyArray<{ symbol: string; name: string }> = [
+  { symbol: "RELIANCE.NS", name: "Reliance Industries" },
+  { symbol: "TCS.NS", name: "Tata Consultancy Services" },
+  { symbol: "HDFCBANK.NS", name: "HDFC Bank" },
+  { symbol: "INFY.NS", name: "Infosys" },
+  { symbol: "ICICIBANK.NS", name: "ICICI Bank" },
+  { symbol: "HINDUNILVR.NS", name: "Hindustan Unilever" },
+  { symbol: "ITC.NS", name: "ITC" },
+  { symbol: "BHARTIARTL.NS", name: "Bharti Airtel" },
+  { symbol: "KOTAKBANK.NS", name: "Kotak Mahindra Bank" },
+  { symbol: "LT.NS", name: "Larsen & Toubro" },
+  { symbol: "AXISBANK.NS", name: "Axis Bank" },
+  { symbol: "ASIANPAINT.NS", name: "Asian Paints" },
+  { symbol: "MARUTI.NS", name: "Maruti Suzuki" },
+  { symbol: "BAJFINANCE.NS", name: "Bajaj Finance" },
+  { symbol: "TITAN.NS", name: "Titan Company" },
+  { symbol: "SUNPHARMA.NS", name: "Sun Pharmaceutical" },
+  { symbol: "HCLTECH.NS", name: "HCL Technologies" },
+  { symbol: "WIPRO.NS", name: "Wipro" },
+  { symbol: "NESTLEIND.NS", name: "Nestle India" },
+  { symbol: "ULTRACEMCO.NS", name: "UltraTech Cement" },
+  { symbol: "BAJAJFINSV.NS", name: "Bajaj Finserv" },
+  { symbol: "NTPC.NS", name: "NTPC" },
+  { symbol: "M&M.NS", name: "Mahindra & Mahindra" },
+  { symbol: "POWERGRID.NS", name: "Power Grid Corporation" },
+  { symbol: "TATASTEEL.NS", name: "Tata Steel" },
+  { symbol: "JSWSTEEL.NS", name: "JSW Steel" },
+  { symbol: "COALINDIA.NS", name: "Coal India" },
+  { symbol: "ONGC.NS", name: "Oil & Natural Gas" },
+  { symbol: "ADANIENT.NS", name: "Adani Enterprises" },
+  { symbol: "ADANIPORTS.NS", name: "Adani Ports" },
+  { symbol: "GRASIM.NS", name: "Grasim Industries" },
+  { symbol: "BAJAJ-AUTO.NS", name: "Bajaj Auto" },
+  { symbol: "HEROMOTOCO.NS", name: "Hero MotoCorp" },
+  { symbol: "EICHERMOT.NS", name: "Eicher Motors" },
+  { symbol: "TATAMOTORS.NS", name: "Tata Motors" },
+  { symbol: "INDUSINDBK.NS", name: "IndusInd Bank" },
+  { symbol: "SBIN.NS", name: "State Bank of India" },
+  { symbol: "DRREDDY.NS", name: "Dr. Reddy's Laboratories" },
+  { symbol: "CIPLA.NS", name: "Cipla" },
+  { symbol: "BPCL.NS", name: "Bharat Petroleum" },
+  { symbol: "BRITANNIA.NS", name: "Britannia Industries" },
+  { symbol: "DIVISLAB.NS", name: "Divi's Laboratories" },
+  { symbol: "TATACONSUM.NS", name: "Tata Consumer Products" },
+  { symbol: "HINDALCO.NS", name: "Hindalco Industries" },
+  { symbol: "APOLLOHOSP.NS", name: "Apollo Hospitals" },
+  { symbol: "LTIM.NS", name: "LTIMindtree" },
+  { symbol: "SHRIRAMFIN.NS", name: "Shriram Finance" },
+  { symbol: "TRENT.NS", name: "Trent" },
+  { symbol: "TATAPOWER.NS", name: "Tata Power" },
+  { symbol: "BEL.NS", name: "Bharat Electronics" },
+];
+
 // yahoo-finance2 v3 requires explicit instantiation (was a singleton in v2).
-const yahooFinance = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
+//
+// `validation.logErrors: false` silences yahoo-finance2's noisy schema-drift
+// warnings — Yahoo periodically adds fields (e.g. `impliedSharesOutstanding`
+// on screener responses) that the lib's strict JSON schema rejects, which
+// otherwise THROWS and bubbles up to our try/catches as empty results. The
+// data itself parses fine; we don't need the lib policing Yahoo's payloads.
+const yahooFinance = new YahooFinance({
+  suppressNotices: ["yahooSurvey"],
+  validation: { logErrors: false, logOptionsErrors: false },
+});
 
 const RANGE_TO_PERIOD: Record<OHLCRange, { period1: Date; interval: "1d" | "1wk" }> = {
   "1mo": { period1: daysAgo(30), interval: "1d" },
@@ -204,7 +276,7 @@ export const yahooProvider: MarketDataProvider = {
     const result = (await yahooFinance.screener({
       scrIds: id as any,
       count,
-      region: "US",
+      region: opts?.region ?? "US",
     })) as {
       quotes?: Array<{
         symbol?: string;
@@ -228,6 +300,76 @@ export const yahooProvider: MarketDataProvider = {
           isSupported: ex.supported,
         };
       });
+  },
+
+  async getMarketMovers(region, count = 5): Promise<MarketMovers> {
+    if (region === "IN") {
+      // Quote NIFTY 50 in one batch and rank by intraday % change.
+      const symbols = NIFTY_50.map((n) => n.symbol);
+      const quotes = (await yahooFinance.quote(symbols)) as RawQuote | RawQuote[];
+      const list = Array.isArray(quotes) ? quotes : [quotes];
+      const nameMap = new Map(NIFTY_50.map((n) => [n.symbol, n.name]));
+
+      const enriched: MoverEntry[] = list
+        .map((q) => {
+          const price = Number(q.regularMarketPrice ?? 0);
+          const changePct = Number(q.regularMarketChangePercent ?? 0);
+          return {
+            symbol: q.symbol,
+            name: nameMap.get(q.symbol) ?? q.symbol,
+            exchange: "NSE",
+            currency: q.currency ?? "INR",
+            price,
+            changePct,
+          };
+        })
+        .filter((e) => Number.isFinite(e.changePct) && e.price > 0);
+
+      const sorted = [...enriched].sort((a, b) => b.changePct - a.changePct);
+      return {
+        gainers: sorted.slice(0, count),
+        losers: [...sorted].reverse().slice(0, count),
+      };
+    }
+
+    // US: Yahoo's predefined screens give us the matches; quote them in one
+    // batch to fill in price + change %.
+    const [gainerMatches, loserMatches] = await Promise.all([
+      this.runScreen("day_gainers", { count, region: "US" }),
+      this.runScreen("day_losers", { count, region: "US" }),
+    ]);
+
+    const allSymbols = Array.from(
+      new Set([...gainerMatches, ...loserMatches].map((m) => m.symbol)),
+    );
+    const quotes = allSymbols.length
+      ? ((await yahooFinance.quote(allSymbols)) as RawQuote | RawQuote[])
+      : [];
+    const list = Array.isArray(quotes) ? quotes : [quotes];
+    const quoteBySym = new Map(list.map((q) => [q.symbol, q]));
+
+    function hydrate(matches: SearchMatch[]): MoverEntry[] {
+      return matches
+        .map((m) => {
+          const q = quoteBySym.get(m.symbol);
+          const price = Number(q?.regularMarketPrice ?? 0);
+          const changePct = Number(q?.regularMarketChangePercent ?? 0);
+          return {
+            symbol: m.symbol,
+            name: m.name,
+            exchange: m.exchange,
+            currency: q?.currency ?? m.currency ?? "USD",
+            price,
+            changePct,
+          };
+        })
+        .filter((e) => Number.isFinite(e.changePct) && e.price > 0);
+    }
+
+    return {
+      gainers: hydrate(gainerMatches),
+      losers: hydrate(loserMatches),
+    };
   },
 };
 

@@ -66,6 +66,22 @@ export interface SearchMatch {
   isSupported: boolean;
 }
 
+/** Hydrated mover entry — symbol, label, and live quote rolled into one shape
+ *  so the dashboard can render it directly. */
+export interface MoverEntry {
+  symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  price: number;
+  changePct: number;
+}
+
+export interface MarketMovers {
+  gainers: MoverEntry[];
+  losers: MoverEntry[];
+}
+
 /** A Yahoo predefined screen we surface in the Discover panel. */
 export type ScreenId =
   | "most_actives"
@@ -86,5 +102,16 @@ export interface MarketDataProvider {
   search(query: string): Promise<SearchMatch[]>;
   /** Yahoo predefined screen (most actives, day gainers, etc.) returning lighter
    *  matches so the screener Discover panel can offer instant breadth. */
-  runScreen(id: ScreenId, opts?: { count?: number }): Promise<SearchMatch[]>;
+  runScreen(
+    id: ScreenId,
+    opts?: { count?: number; region?: "US" | "IN" },
+  ): Promise<SearchMatch[]>;
+  /** Region-aware market movers. US uses Yahoo's predefined day_gainers /
+   *  day_losers screens. IN ranks NIFTY 50 components by intraday % change
+   *  (Yahoo's predefined screens are US-locked; the `region` param doesn't
+   *  filter them server-side). Returns hydrated entries with price + name. */
+  getMarketMovers(
+    region: "US" | "IN",
+    count?: number,
+  ): Promise<MarketMovers>;
 }

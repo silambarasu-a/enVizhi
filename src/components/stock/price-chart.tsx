@@ -198,9 +198,17 @@ export function PriceChart({
         </div>
       </div>
 
-      {/* Selection summary — appears above the chart when a range is selected. */}
+      {/* Selection summary — appears above the chart when a range is selected.
+       *  Border + background tint mirror the direction of the move (green up,
+       *  rose down) so the visual matches the chart highlight at a glance. */}
       {selection ? (
-        <div className="mx-5 mt-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5 flex items-center justify-between gap-3 text-xs">
+        <div
+          className={`mx-5 mt-4 rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 text-xs ${
+            selection.isUp
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-rose-500/30 bg-rose-500/5"
+          }`}
+        >
           <div className="flex items-center gap-3 min-w-0 flex-wrap">
             <span className="font-mono text-muted-foreground">
               {fmtDate.format(new Date(selection.startDate))} →{" "}
@@ -306,10 +314,12 @@ export function PriceChart({
                 <ReferenceArea
                   x1={selStartDate}
                   x2={selEndDate}
-                  fill="var(--color-primary)"
-                  fillOpacity={0.12}
-                  stroke="var(--color-primary)"
-                  strokeOpacity={0.4}
+                  // Mirror the gain/loss tint used in the summary badge above —
+                  // emerald when the selection is a gain, rose when a loss.
+                  fill={selection?.isUp ? "#10B981" : "#F43F5E"}
+                  fillOpacity={0.18}
+                  stroke={selection?.isUp ? "#10B981" : "#F43F5E"}
+                  strokeOpacity={0.5}
                 />
               ) : null}
               <Area

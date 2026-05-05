@@ -11,17 +11,25 @@ datasource db {
 
 // ─── Auth.js (Auth.js v5) ──────────────────────────────────────────────────
 
+enum MarketsRegion {
+  US
+  IN
+}
+
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
+  id            String        @id @default(cuid())
+  email         String        @unique
   emailVerified DateTime?
   name          String?
   image         String?
-  baseCurrency  String    @default("USD")
+  baseCurrency  String        @default("USD")
+  /// Default region for the dashboard "Top gainers / losers" cards. Persists
+  /// across sessions so users land on their preferred market every time.
+  marketsRegion MarketsRegion @default(US)
   /// Bcrypt hash. Null for users who only sign in via magic link.
   passwordHash  String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
 
   accounts                Account[]
   sessions                Session[]

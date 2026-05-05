@@ -6,6 +6,8 @@ import { prisma } from "@/lib/prisma";
 import { provider } from "@/lib/market-data/router";
 import { ALERT_TYPE_LABEL } from "@/lib/alerts/evaluator";
 import { VerifyEmailBanner } from "@/components/auth/verify-email-banner";
+import { MarketsRegionToggle } from "@/components/dashboard/markets-region-toggle";
+import type { MarketsRegion } from "@/generated/prisma/enums";
 
 // Per-user content + live quotes — always render fresh on the server.
 // `revalidate` deliberately omitted: combining it with `force-dynamic` is
@@ -26,23 +28,45 @@ export default async function DashboardPage() {
 
   const userMeta = await prisma.user.findUnique({
     where: { id: userId },
-    select: { email: true, emailVerified: true },
+    select: { email: true, emailVerified: true, marketsRegion: true },
   });
+  const region: MarketsRegion = userMeta?.marketsRegion ?? "US";
 
-  const [stocks, fundamentalsAgg, indexQuotes, watchlists, alerts] = await Promise.all([
+  // Pull what the user actually owns (universe scoped) + live indices and
+  // Yahoo's market-wide gainers/losers in parallel. Movers no longer come
+  // from a slice of the seeded universe — they're from Yahoo's day_gainers
+  // and day_losers screens, so the dashboard reflects real market action.
+  const [
+    userStocks,
+    fundamentalsAgg,
+    indexQuotes,
+    watchlists,
+    alerts,
+    yahooMovers,
+  ] = await Promise.all([
     prisma.stock.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        symbol: true,
-        exchange: true,
-        name: true,
-        currency: true,
+      where: {
+        isActive: true,
+        OR: [
+          { watchlistItems: { some: { watchlist: { userId } } } },
+          { transactions: { some: { portfolio: { userId } } } },
+          { alerts: { some: { userId } } },
+        ],
       },
+      select: { id: true, symbol: true, exchange: true, name: true, currency: true },
     }),
     prisma.stockFundamentals.aggregate({
       _max: { syncedAt: true },
       _count: { stockId: true },
+      where: {
+        stock: {
+          OR: [
+            { watchlistItems: { some: { watchlist: { userId } } } },
+            { transactions: { some: { portfolio: { userId } } } },
+            { alerts: { some: { userId } } },
+          ],
+        },
+      },
     }),
     fetchQuotesSafe([...INDEX_SYMBOLS]),
     prisma.watchlist.findMany({
@@ -54,9 +78,7 @@ export default async function DashboardPage() {
           take: 6,
           orderBy: { addedAt: "desc" },
           include: {
-            stock: {
-              select: { id: true, symbol: true, name: true, currency: true },
-            },
+            stock: { select: { id: true, symbol: true, name: true, currency: true } },
           },
         },
       },
@@ -74,30 +96,16 @@ export default async function DashboardPage() {
         stockId: true,
       },
     }),
+    fetchMoversSafe(region, 5),
   ]);
 
   const latestSync = fundamentalsAgg._max.syncedAt;
   const fundamentalsCount = fundamentalsAgg._count.stockId;
 
-  // Universe movers — fetch live for the first 25 symbols.
-  const trackedSymbols = stocks.slice(0, 25).map((s) => s.symbol);
-  const movers = await fetchQuotesSafe(trackedSymbols);
-  const moversWithName = movers
-    .map((q) => {
-      const stock = stocks.find((s) => s.symbol === q.symbol);
-      return {
-        symbol: q.symbol,
-        name: stock?.name ?? q.symbol,
-        currency: q.currency ?? stock?.currency ?? "USD",
-        price: q.price,
-        changePct: q.changePct ?? 0,
-      };
-    })
-    .filter((q) => Number.isFinite(q.changePct));
-
-  const sortedByMove = [...moversWithName].sort((a, b) => b.changePct - a.changePct);
-  const topGainer = sortedByMove[0];
-  const topLoser = sortedByMove[sortedByMove.length - 1];
+  const topGainers = yahooMovers.gainers;
+  const topLosers = yahooMovers.losers;
+  const topGainer = topGainers[0];
+  const topLoser = topLosers[0];
 
   // Hydrate alert stocks
   const alertStockIds = Array.from(new Set(alerts.map((a) => a.stockId)));
@@ -127,7 +135,7 @@ export default async function DashboardPage() {
           </h1>
         </div>
         <UniverseChip
-          total={stocks.length}
+          total={userStocks.length}
           fundamentalsCount={fundamentalsCount}
           latestSync={latestSync}
         />
@@ -158,10 +166,23 @@ export default async function DashboardPage() {
         <AlertsPreview alerts={alerts} stockMap={alertStockMap} />
       </section>
 
-      {/* ── Movers ── */}
-      <section className="grid gap-4 sm:grid-cols-2">
-        <MoverCard kind="up" rows={sortedByMove.slice(0, 5)} highlight={topGainer} />
-        <MoverCard kind="down" rows={sortedByMove.slice(-5).reverse()} highlight={topLoser} />
+      {/* ── Movers (live, market-wide via Yahoo) ── */}
+      <section className="space-y-3">
+        <div className="flex items-end justify-between gap-3 flex-wrap">
+          <div>
+            <h2 className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+              Market movers
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Live from Yahoo · auto-saves to your profile
+            </p>
+          </div>
+          <MarketsRegionToggle current={region} />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <MoverCard kind="up" rows={topGainers} highlight={topGainer} />
+          <MoverCard kind="down" rows={topLosers} highlight={topLoser} />
+        </div>
       </section>
     </div>
   );
@@ -178,12 +199,40 @@ async function fetchQuotesSafe(symbols: string[]) {
   }
 }
 
+async function fetchMoversSafe(region: MarketsRegion, count: number) {
+  try {
+    return await provider.getMarketMovers(region, count);
+  } catch {
+    return { gainers: [], losers: [] };
+  }
+}
+
 function greeting() {
   const hour = new Date().getHours();
   if (hour < 5) return "Burning the midnight oil";
   if (hour < 12) return "Good morning";
   if (hour < 17) return "Good afternoon";
   return "Good evening";
+}
+
+/** Currency-aware price formatter — `$234.12`, `₹2,432.30`, etc. Uses
+ *  `narrowSymbol` so we get `$` instead of `US$` when locale-mixed (e.g. an
+ *  INR-locale user viewing a USD stock). Centralized so every dashboard
+ *  surface renders prices consistently. */
+function formatCurrency(value: number, currency: string): string {
+  const safeCurrency = currency || "USD";
+  try {
+    return new Intl.NumberFormat(safeCurrency === "INR" ? "en-IN" : "en-US", {
+      style: "currency",
+      currency: safeCurrency,
+      currencyDisplay: "narrowSymbol",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    // Unknown ISO code (rare from Yahoo) — fall back to plain number + suffix.
+    return `${value.toFixed(2)} ${safeCurrency}`;
+  }
 }
 
 function relativeTime(d: Date | null) {
@@ -243,10 +292,6 @@ function IndexTile({
   currency: string;
 }) {
   const isUp = (changePct ?? 0) >= 0;
-  const fmt = new Intl.NumberFormat("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
   return (
     <div className="px-6 py-5 flex items-center justify-between gap-4">
       <div>
@@ -255,7 +300,7 @@ function IndexTile({
       </div>
       <div className="text-right">
         <div className="font-mono tabular-nums text-2xl">
-          {price != null ? fmt.format(price) : "—"}
+          {price != null ? formatCurrency(price, currency) : "—"}
         </div>
         {changePct != null ? (
           <div
@@ -484,10 +529,7 @@ function MoverCard({
                 </div>
                 <div className="text-right shrink-0">
                   <div className="font-mono tabular-nums text-[13px]">
-                    {new Intl.NumberFormat("en-US", {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    }).format(r.price)}
+                    {formatCurrency(r.price, r.currency)}
                   </div>
                   <div className={`font-mono tabular-nums text-[11px] ${accentClass}`}>
                     {r.changePct >= 0 ? "+" : ""}
