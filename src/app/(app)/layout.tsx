@@ -8,7 +8,9 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const session = await auth();
-  if (!session?.user?.email) {
+  // Standard auth gate — match the per-page checks (id, not email) so the layout
+  // and inner pages never disagree about whether a session is "valid".
+  if (!session?.user?.id || !session?.user?.email) {
     redirect("/signin");
   }
 

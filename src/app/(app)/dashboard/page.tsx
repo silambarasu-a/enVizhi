@@ -7,8 +7,10 @@ import { provider } from "@/lib/market-data/router";
 import { ALERT_TYPE_LABEL } from "@/lib/alerts/evaluator";
 import { VerifyEmailBanner } from "@/components/auth/verify-email-banner";
 
+// Per-user content + live quotes — always render fresh on the server.
+// `revalidate` deliberately omitted: combining it with `force-dynamic` is
+// contradictory and was suspected of triggering odd cache behavior in dev.
 export const dynamic = "force-dynamic";
-export const revalidate = 60;
 
 const INDEX_SYMBOLS = ["^NSEI", "^GSPC", "USDINR=X"] as const;
 const INDEX_LABEL: Record<(typeof INDEX_SYMBOLS)[number], string> = {

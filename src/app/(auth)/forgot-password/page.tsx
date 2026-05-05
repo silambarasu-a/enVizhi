@@ -1,10 +1,17 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { APP_CONFIG } from "@/lib/config";
 import { ArrowRight } from "lucide-react";
 import { requestPasswordReset } from "@/app/(auth)/actions";
+import { auth } from "@/lib/auth";
 
-export default function ForgotPasswordPage() {
+export default async function ForgotPasswordPage() {
+  // Already signed in? Send them to /profile to manage their password instead
+  // of asking them to recover it via email.
+  const session = await auth();
+  if (session?.user?.id) redirect("/profile");
+
   return (
     <main className="min-h-svh grid place-items-center px-6 bg-background">
       <div className="w-full max-w-sm">

@@ -1,9 +1,11 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { APP_CONFIG } from "@/lib/config";
 import { SignInTabs } from "@/components/auth/signin-tabs";
 import { GoogleButton } from "@/components/auth/google-button";
-import { isGoogleEnabled } from "@/lib/auth";
+import { auth, isGoogleEnabled } from "@/lib/auth";
+import { resolveSafeRedirect } from "@/lib/auth-redirect";
 
 const ERROR_MESSAGES: Record<string, string> = {
   CredentialsSignin: "Email or password is incorrect.",
@@ -17,7 +19,16 @@ export default async function SignInPage({
   searchParams: Promise<{ callbackUrl?: string; error?: string; email?: string }>;
 }) {
   const params = await searchParams;
-  const callbackUrl = params.callbackUrl ?? "/dashboard";
+  const callbackUrl = resolveSafeRedirect(params.callbackUrl);
+
+  // Already signed in? Bounce to wherever they were headed.
+  // Require `id` (not just email) to match the auth check on protected pages —
+  // otherwise a half-hydrated session can ping-pong between /signin and /dashboard.
+  const session = await auth();
+  if (session?.user?.id) {
+    redirect(callbackUrl);
+  }
+
   const initialError = params.error ? ERROR_MESSAGES[params.error] ?? "Sign-in failed. Please try again." : undefined;
   const initialEmail = params.email?.trim().toLowerCase();
 

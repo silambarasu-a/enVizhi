@@ -1,11 +1,14 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { APP_CONFIG } from "@/lib/config";
 import { SignUpForm } from "@/components/auth/signup-form";
 import { GoogleButton } from "@/components/auth/google-button";
-import { isGoogleEnabled } from "@/lib/auth";
+import { auth, isGoogleEnabled } from "@/lib/auth";
 
-export default function SignUpPage() {
+export default async function SignUpPage() {
+  const session = await auth();
+  if (session?.user?.id) redirect("/dashboard");
   return (
     <main className="min-h-svh grid place-items-center px-6 bg-background">
       <div className="w-full max-w-sm">

@@ -14,7 +14,6 @@ import { CreateAlertForm } from "@/components/alerts/create-alert-form";
 import { AlertRow } from "@/components/alerts/alert-row";
 
 export const dynamic = "force-dynamic";
-export const revalidate = 60;
 
 export default async function StockDetailPage({
   params,

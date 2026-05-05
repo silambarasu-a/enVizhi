@@ -1,9 +1,20 @@
 import Link from "next/link";
-import { ArrowRight, Check } from "lucide-react";
+import { ArrowRight, Check, LayoutDashboard } from "lucide-react";
 import { LogoMark } from "@/components/brand/logo-mark";
 import { APP_CONFIG } from "@/lib/config";
+import { auth } from "@/lib/auth";
+import { UserMenu } from "@/components/auth/user-menu";
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const session = await auth();
+  // Match the auth-check used by protected pages (id, not email) so the landing
+  // never disagrees about whether someone is signed in.
+  const isAuthed = Boolean(session?.user?.id && session?.user?.email);
+  const firstName = session?.user?.name?.split(" ")[0];
+  const userForMenu = isAuthed && session?.user?.email
+    ? { email: session.user.email, name: session.user.name }
+    : null;
+
   return (
     <main className="min-h-svh flex flex-col bg-background">
       {/* ─── Top bar ──────────────────────────────────────────────────────── */}
@@ -20,19 +31,37 @@ export default function LandingPage() {
             >
               Features
             </Link>
-            <Link
-              href="/signin"
-              className="inline-flex h-9 px-3 items-center text-muted-foreground hover:text-foreground transition-colors"
-            >
-              Sign in
-            </Link>
-            <Link
-              href="/signin"
-              className="ml-1 inline-flex h-9 px-4 items-center gap-1.5 rounded-lg bg-foreground text-background text-[13px] font-medium hover:opacity-90 transition-opacity"
-            >
-              Get started
-              <ArrowRight className="size-3.5" />
-            </Link>
+            {isAuthed && userForMenu ? (
+              <>
+                <Link
+                  href="/dashboard"
+                  className="ml-1 inline-flex h-9 px-4 items-center gap-1.5 rounded-lg bg-foreground text-background text-[13px] font-medium hover:opacity-90 transition-opacity"
+                >
+                  <LayoutDashboard className="size-3.5" />
+                  <span className="hidden sm:inline">Open dashboard</span>
+                  <span className="sm:hidden">Dashboard</span>
+                </Link>
+                <div className="ml-1.5">
+                  <UserMenu user={userForMenu} size={32} />
+                </div>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/signin"
+                  className="inline-flex h-9 px-3 items-center text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/signin"
+                  className="ml-1 inline-flex h-9 px-4 items-center gap-1.5 rounded-lg bg-foreground text-background text-[13px] font-medium hover:opacity-90 transition-opacity"
+                >
+                  Get started
+                  <ArrowRight className="size-3.5" />
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </header>
@@ -57,13 +86,23 @@ export default function LandingPage() {
           </p>
 
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            <Link
-              href="/signin"
-              className="inline-flex h-11 px-6 items-center gap-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-card"
-            >
-              Start free
-              <ArrowRight className="size-4" />
-            </Link>
+            {isAuthed ? (
+              <Link
+                href="/dashboard"
+                className="inline-flex h-11 px-6 items-center gap-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-card"
+              >
+                <LayoutDashboard className="size-4" />
+                {firstName ? `Continue, ${firstName}` : "Open dashboard"}
+              </Link>
+            ) : (
+              <Link
+                href="/signin"
+                className="inline-flex h-11 px-6 items-center gap-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-card"
+              >
+                Start free
+                <ArrowRight className="size-4" />
+              </Link>
+            )}
             <Link
               href="#features"
               className="inline-flex h-11 px-6 items-center rounded-lg border border-border bg-card text-sm font-medium hover:bg-secondary transition-colors"
@@ -73,7 +112,9 @@ export default function LandingPage() {
           </div>
 
           <p className="mt-6 font-mono text-[11px] text-muted-foreground/80">
-            Free during beta · Quotes delayed 15 min · No credit card
+            {isAuthed
+              ? "Quotes delayed 15 min · You're signed in"
+              : "Free during beta · Quotes delayed 15 min · No credit card"}
           </p>
         </div>
 
@@ -156,7 +197,7 @@ export default function LandingPage() {
           </h2>
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             <Link
-              href="/signin"
+              href={isAuthed ? "/screener" : "/signin"}
               className="inline-flex h-11 px-6 items-center gap-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity shadow-card"
             >
               Open the screener
