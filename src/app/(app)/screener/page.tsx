@@ -1,7 +1,12 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { Search } from "lucide-react";
+import { auth } from "@/lib/auth";
 import { filterFromSearchParams } from "@/lib/screener/dsl";
 import { listSectors, runScreener } from "@/lib/screener/query";
 import { FilterControls } from "@/components/screener/filter-controls";
 import { ResultsTable, type ScreenerTableRow } from "@/components/screener/results-table";
+import { DiscoverPanel } from "@/components/screener/discover-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -10,12 +15,16 @@ export default async function ScreenerPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/signin");
+  const userId = session.user.id;
+
   const sp = await searchParams;
   const filter = filterFromSearchParams(sp);
 
   const [{ rows, total, page, pageSize }, sectors] = await Promise.all([
-    runScreener(filter),
-    listSectors(),
+    runScreener(filter, userId),
+    listSectors(userId),
   ]);
 
   // BigInt isn't serializable across the Server → Client boundary; convert
@@ -47,25 +56,63 @@ export default async function ScreenerPage({
       : null,
   }));
 
+  // True when user has truly nothing — no stocks at all in their universe yet.
+  // Distinct from "filtered to zero" (where total drops because of strict
+  // filters). For empty-state we look at unfiltered totals via a count.
+  const hasAnyStock = total > 0 || hasNonTrivialFilters(filter);
+
   return (
-    <div className="mx-auto max-w-[1400px] px-6 py-10">
-      <header className="mb-8 space-y-1.5">
+    <div className="mx-auto max-w-[1400px] px-6 py-10 space-y-6">
+      <header className="space-y-1.5">
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
           Screener
         </p>
-        <h1 className="font-display text-3xl md:text-4xl">Filter the universe</h1>
+        <h1 className="font-display text-3xl md:text-4xl">Filter your universe</h1>
         <p className="text-sm text-muted-foreground max-w-2xl">
-          Combine valuation, growth, quality, and risk filters. Your URL stays in sync — bookmark
-          or share any screen.
+          Stocks here come from your watchlists, portfolio, and alerts. Use{" "}
+          <kbd className="font-mono text-[11px] px-1.5 py-0.5 rounded border border-border bg-secondary">
+            ⌘K
+          </kbd>{" "}
+          to find a ticker, or pull a Yahoo screen below to expand.
         </p>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-8">
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-card h-fit lg:sticky lg:top-20">
-          <FilterControls sectors={sectors} />
+      <DiscoverPanel />
+
+      {!hasAnyStock ? (
+        <div className="rounded-2xl border border-dashed border-border bg-card/40 p-10 text-center">
+          <Search className="size-10 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-sm font-medium">Your universe is empty</p>
+          <p className="text-xs text-muted-foreground mt-1.5 max-w-md mx-auto leading-relaxed">
+            Add stocks via{" "}
+            <kbd className="font-mono text-[10px] px-1 py-0.5 rounded border border-border bg-secondary">
+              ⌘K
+            </kbd>{" "}
+            search, or{" "}
+            <Link href="/watchlists" className="text-primary hover:underline underline-offset-4">
+              create a watchlist
+            </Link>
+            . Click a Discover button above to import the top names from a Yahoo screen.
+          </p>
         </div>
-        <ResultsTable rows={tableRows} total={total} page={page} pageSize={pageSize} />
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 lg:gap-8">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-card h-fit lg:sticky lg:top-20">
+            <FilterControls sectors={sectors} />
+          </div>
+          <ResultsTable rows={tableRows} total={total} page={page} pageSize={pageSize} />
+        </div>
+      )}
     </div>
+  );
+}
+
+function hasNonTrivialFilters(filter: ReturnType<typeof filterFromSearchParams>) {
+  return (
+    Object.keys(filter.ranges ?? {}).length > 0 ||
+    filter.exchanges.length > 0 ||
+    filter.sectors.length > 0 ||
+    filter.lynchCategories.length > 0 ||
+    !!filter.search
   );
 }

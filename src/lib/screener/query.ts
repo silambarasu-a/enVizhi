@@ -40,9 +40,37 @@ export interface ScreenerResult {
   pageSize: number;
 }
 
-export async function runScreener(filter: ScreenerFilter): Promise<ScreenerResult> {
-  const where = buildStockWhere(filter);
+/**
+ * Run the screener scoped to a user's accumulated universe.
+ *
+ *   "Universe" = stocks the user has touched: in any of their watchlists,
+ *   referenced by any of their portfolio transactions, or with an active
+ *   alert. The fully-live rewrite removed the seeded global universe, so the
+ *   screener works against this personal-but-growing set.
+ *
+ *   Discover-panel actions (e.g. clicking "Most Active") add stocks to this
+ *   set by lazy-creating Stock rows + their fundamentals — at which point
+ *   they show up here on the next refresh.
+ */
+export async function runScreener(
+  filter: ScreenerFilter,
+  userId: string,
+): Promise<ScreenerResult> {
+  const baseWhere = buildStockWhere(filter);
   const orderBy = buildOrderBy(filter.sort, filter.dir);
+
+  const where = {
+    AND: [
+      baseWhere,
+      {
+        OR: [
+          { watchlistItems: { some: { watchlist: { userId } } } },
+          { transactions: { some: { portfolio: { userId } } } },
+          { alerts: { some: { userId } } },
+        ],
+      },
+    ],
+  };
 
   const [rows, total] = await Promise.all([
     prisma.stock.findMany({
@@ -89,11 +117,17 @@ export async function runScreener(filter: ScreenerFilter): Promise<ScreenerResul
   };
 }
 
-/** Distinct sector list — populated from Yahoo at sync time. Used to power the
- *  sector filter dropdown. */
-export async function listSectors(): Promise<string[]> {
+/** Sector list, scoped to the user's accumulated universe. */
+export async function listSectors(userId: string): Promise<string[]> {
   const rows = await prisma.stock.findMany({
-    where: { sector: { not: null } },
+    where: {
+      sector: { not: null },
+      OR: [
+        { watchlistItems: { some: { watchlist: { userId } } } },
+        { transactions: { some: { portfolio: { userId } } } },
+        { alerts: { some: { userId } } },
+      ],
+    },
     select: { sector: true },
     distinct: ["sector"],
     orderBy: { sector: "asc" },

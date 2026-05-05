@@ -5,6 +5,7 @@ import type {
   NormalizedQuote,
   OHLCBar,
   OHLCRange,
+  ScreenId,
   SearchMatch,
 } from "./types";
 
@@ -186,6 +187,42 @@ export const yahooProvider: MarketDataProvider = {
         return {
           symbol: q.symbol!,
           name: q.longname ?? q.shortname ?? q.symbol!,
+          exchange: ex.label,
+          currency: q.currency ?? null,
+          isSupported: ex.supported,
+        };
+      });
+  },
+
+  async runScreen(id: ScreenId, opts) {
+    const count = Math.min(Math.max(opts?.count ?? 25, 5), 50);
+    // yahoo-finance2's `PredefinedScreenerModules` union is incomplete (missing
+    // `trending_now` and a few others Yahoo actually accepts). Cast scrIds
+    // through any to bypass the lib's typing while still validating at our
+    // ScreenId boundary.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = (await yahooFinance.screener({
+      scrIds: id as any,
+      count,
+      region: "US",
+    })) as {
+      quotes?: Array<{
+        symbol?: string;
+        shortName?: string;
+        longName?: string;
+        exchange?: string;
+        currency?: string;
+        quoteType?: string;
+      }>;
+    };
+    const quotes = result.quotes ?? [];
+    return quotes
+      .filter((q) => q.symbol && (q.quoteType === "EQUITY" || q.quoteType === "ETF"))
+      .map<SearchMatch>((q) => {
+        const ex = normalizeYahooExchange(q.exchange);
+        return {
+          symbol: q.symbol!,
+          name: q.longName ?? q.shortName ?? q.symbol!,
           exchange: ex.label,
           currency: q.currency ?? null,
           isSupported: ex.supported,

@@ -66,6 +66,16 @@ export interface SearchMatch {
   isSupported: boolean;
 }
 
+/** A Yahoo predefined screen we surface in the Discover panel. */
+export type ScreenId =
+  | "most_actives"
+  | "day_gainers"
+  | "day_losers"
+  | "trending_now"
+  | "undervalued_large_caps"
+  | "growth_technology_stocks"
+  | "aggressive_small_caps";
+
 export interface MarketDataProvider {
   name: string;
   getQuote(symbol: string): Promise<NormalizedQuote>;
@@ -74,4 +84,7 @@ export interface MarketDataProvider {
   getOHLC(symbol: string, range: OHLCRange): Promise<OHLCBar[]>;
   getFXRate(base: string, quote: string): Promise<number>;
   search(query: string): Promise<SearchMatch[]>;
+  /** Yahoo predefined screen (most actives, day gainers, etc.) returning lighter
+   *  matches so the screener Discover panel can offer instant breadth. */
+  runScreen(id: ScreenId, opts?: { count?: number }): Promise<SearchMatch[]>;
 }

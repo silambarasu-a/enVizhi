@@ -13,7 +13,6 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "db:seed": "tsx prisma/seed.ts",
     "sync:fundamentals": "tsx scripts/sync-fundamentals.ts",
     "check:alerts": "tsx scripts/check-alerts.ts",
     "db:studio": "prisma studio"
