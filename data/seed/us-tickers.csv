@@ -1,0 +1,26 @@
+symbol,exchange,currency,name
+AAPL,NASDAQ,USD,Apple Inc
+MSFT,NASDAQ,USD,Microsoft Corporation
+GOOGL,NASDAQ,USD,Alphabet Inc Class A
+AMZN,NASDAQ,USD,Amazon.com Inc
+META,NASDAQ,USD,Meta Platforms Inc
+NVDA,NASDAQ,USD,NVIDIA Corporation
+TSLA,NASDAQ,USD,Tesla Inc
+AVGO,NASDAQ,USD,Broadcom Inc
+COST,NASDAQ,USD,Costco Wholesale Corporation
+NFLX,NASDAQ,USD,Netflix Inc
+ADBE,NASDAQ,USD,Adobe Inc
+PEP,NASDAQ,USD,PepsiCo Inc
+AMD,NASDAQ,USD,Advanced Micro Devices
+INTC,NASDAQ,USD,Intel Corporation
+QCOM,NASDAQ,USD,QUALCOMM Incorporated
+BRK-B,NYSE,USD,Berkshire Hathaway Inc Class B
+JPM,NYSE,USD,JPMorgan Chase & Co
+V,NYSE,USD,Visa Inc
+JNJ,NYSE,USD,Johnson & Johnson
+PG,NYSE,USD,Procter & Gamble Co
+MA,NYSE,USD,Mastercard Incorporated
+HD,NYSE,USD,Home Depot Inc
+BAC,NYSE,USD,Bank of America Corporation
+WMT,NYSE,USD,Walmart Inc
+UNH,NYSE,USD,UnitedHealth Group Inc

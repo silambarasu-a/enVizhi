@@ -1,0 +1,163 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-jetbrains-mono);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --shadow-card: 0 1px 2px 0 rgb(0 0 0 / 0.04), 0 1px 6px -1px rgb(0 0 0 / 0.06);
+  --shadow-card-lg: 0 4px 24px -6px rgb(0 0 0 / 0.08), 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * EnVizhi — neutral zinc × indigo. Modern SaaS aesthetic.
+ * Light: pure white surfaces on a soft zinc backdrop. Indigo for primary actions.
+ * Dark:  zinc-950 background, zinc-900 surfaces, lifted indigo accent.
+ * Style notes: shadows over borders, generous radius, subdued text grays.
+ * ════════════════════════════════════════════════════════════════════════════ */
+:root {
+  --background: #FAFAFA;          /* zinc-50 */
+  --foreground: #18181B;          /* zinc-900 */
+  --card: #FFFFFF;
+  --card-foreground: #18181B;
+  --popover: #FFFFFF;
+  --popover-foreground: #18181B;
+
+  --primary: #4F46E5;             /* indigo-600 */
+  --primary-foreground: #FFFFFF;
+  --secondary: #F4F4F5;           /* zinc-100 */
+  --secondary-foreground: #18181B;
+  --muted: #F4F4F5;
+  --muted-foreground: #71717A;    /* zinc-500 */
+  --accent: #F4F4F5;
+  --accent-foreground: #18181B;
+  --destructive: #DC2626;
+
+  --border: #E4E4E7;              /* zinc-200 */
+  --input: #E4E4E7;
+  --ring: #4F46E5;
+
+  --chart-1: #4F46E5;             /* indigo */
+  --chart-2: #10B981;             /* emerald */
+  --chart-3: #F59E0B;             /* amber */
+  --chart-4: #EC4899;             /* pink */
+  --chart-5: #06B6D4;             /* cyan */
+
+  --radius: 0.625rem;             /* 10px — friendlier */
+}
+
+.dark {
+  --background: #09090B;          /* zinc-950 */
+  --foreground: #FAFAFA;
+  --card: #18181B;                /* zinc-900 */
+  --card-foreground: #FAFAFA;
+  --popover: #18181B;
+  --popover-foreground: #FAFAFA;
+
+  --primary: #818CF8;             /* indigo-400, lifted for dark */
+  --primary-foreground: #09090B;
+  --secondary: #27272A;            /* zinc-800 */
+  --secondary-foreground: #FAFAFA;
+  --muted: #27272A;
+  --muted-foreground: #A1A1AA;     /* zinc-400 */
+  --accent: #27272A;
+  --accent-foreground: #FAFAFA;
+  --destructive: #F87171;
+
+  --border: #27272A;
+  --input: #27272A;
+  --ring: #818CF8;
+
+  --chart-1: #818CF8;
+  --chart-2: #34D399;
+  --chart-3: #FBBF24;
+  --chart-4: #F472B6;
+  --chart-5: #22D3EE;
+}
+
+/* ─── Type ──────────────────────────────────────────────────────────────── */
+.font-display {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.tabular,
+.num,
+td.num {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+/* ─── Ticker tape marquee ────────────────────────────────────────────────── */
+@keyframes ticker-marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.ticker-track {
+  animation: ticker-marquee 70s linear infinite;
+  width: max-content;
+}
+.ticker-track:hover { animation-play-state: paused; }
+
+.shadow-card { box-shadow: var(--shadow-card); }
+.shadow-card-lg { box-shadow: var(--shadow-card-lg); }
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans text-base antialiased;
+    font-feature-settings: "ss01", "cv11";
+  }
+
+  /* Scrollbar — minimal. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted-foreground) transparent;
+  }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb {
+    background-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+    border-radius: 8px;
+    border: 2px solid var(--background);
+  }
+  *::-webkit-scrollbar-thumb:hover { background-color: var(--muted-foreground); }
+}

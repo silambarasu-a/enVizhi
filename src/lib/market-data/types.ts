@@ -1,0 +1,62 @@
+// Provider-agnostic shapes. Every implementation (Yahoo today, FMP/EODHD later)
+// must normalize into these types so screener / Lynch / portfolio code never
+// has to branch on the upstream source.
+
+export type Exchange = "NASDAQ" | "NYSE" | "NSE" | "BSE";
+
+export interface NormalizedQuote {
+  symbol: string;
+  price: number;
+  change: number | null;
+  changePct: number | null;
+  volume: bigint | null;
+  marketState: string | null;
+  currency: string;
+  fetchedAt: Date;
+}
+
+export interface NormalizedFundamentals {
+  symbol: string;
+  pe: number | null;
+  peg: number | null;
+  marketCap: bigint | null;
+  eps: number | null;
+  /** Five-year compound EPS growth (percent, e.g. 12.5 = 12.5%/yr). */
+  epsGrowth5y: number | null;
+  /** Five-year compound revenue growth (percent). */
+  revenueGrowth5y: number | null;
+  /** Trailing dividend yield (percent, e.g. 1.8 = 1.8%/yr). */
+  dividendYield: number | null;
+  debtToEquity: number | null;
+  roe: number | null;
+  profitMargin: number | null;
+  beta: number | null;
+  priceToBook: number | null;
+  sector: string | null;
+  industry: string | null;
+  currency: string | null;
+  syncedAt: Date;
+  /** Map of field name → true when the provider returned null/missing. Used by
+   *  the screener to surface gaps instead of silently dropping rows. */
+  dataQualityFlags: Record<string, boolean>;
+}
+
+export interface OHLCBar {
+  date: Date;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: bigint;
+}
+
+export type OHLCRange = "1mo" | "3mo" | "6mo" | "1y" | "5y";
+
+export interface MarketDataProvider {
+  name: string;
+  getQuote(symbol: string): Promise<NormalizedQuote>;
+  getQuotes(symbols: string[]): Promise<NormalizedQuote[]>;
+  getFundamentals(symbol: string): Promise<NormalizedFundamentals>;
+  getOHLC(symbol: string, range: OHLCRange): Promise<OHLCBar[]>;
+  getFXRate(base: string, quote: string): Promise<number>;
+}

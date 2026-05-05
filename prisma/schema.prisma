@@ -1,0 +1,308 @@
+// Pangu — stock tracker, screener, analysis SaaS.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Auth.js (Auth.js v5) ──────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  emailVerified DateTime?
+  name          String?
+  image         String?
+  baseCurrency  String    @default("USD")
+  /// Bcrypt hash. Null for users who only sign in via magic link.
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts                Account[]
+  sessions                Session[]
+  watchlists              Watchlist[]
+  alerts                  Alert[]
+  portfolios              Portfolio[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationTokens EmailVerificationToken[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @id
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@id([identifier, token])
+}
+
+/// Email-verification tokens for password signups. Magic-link sign-in uses
+/// `VerificationToken` (Auth.js convention); this is for our explicit
+/// "click to verify your email" flow on Credentials accounts.
+model EmailVerificationToken {
+  token     String    @id
+  userId    String
+  expires   DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expires])
+}
+
+/// Password-reset tokens — separate from VerificationToken so magic-link auth
+/// can't accidentally collide with reset flows. Single-use; expires in 1 hour.
+model PasswordResetToken {
+  token     String    @id
+  userId    String
+  expires   DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expires])
+}
+
+// ─── Markets ────────────────────────────────────────────────────────────────
+
+enum Exchange {
+  NASDAQ
+  NYSE
+  NSE
+  BSE
+}
+
+enum LynchCategory {
+  SLOW_GROWER
+  STALWART
+  FAST_GROWER
+  CYCLICAL
+  TURNAROUND
+  ASSET_PLAY
+}
+
+/// One row per tradeable instrument. `symbol` includes the Yahoo suffix for India
+/// (e.g. RELIANCE.NS, TCS.NS, RELIANCE.BO). For US stocks the bare ticker is used.
+model Stock {
+  id        String   @id @default(cuid())
+  symbol    String   @unique
+  exchange  Exchange
+  name      String
+  sector    String?
+  industry  String?
+  currency  String // "USD" or "INR"
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  fundamentals   StockFundamentals?
+  watchlistItems WatchlistItem[]
+  alerts         Alert[]
+  transactions   Transaction[]
+
+  @@index([exchange])
+  @@index([sector])
+}
+
+/// Snapshot of fundamentals — refreshed nightly. `dataQualityFlags` records which
+/// fields the upstream provider returned as null so the screener can disclose gaps
+/// rather than silently filter them out.
+model StockFundamentals {
+  stockId          String         @id
+  pe               Float?
+  peg              Float?
+  modifiedPeg      Float? // (epsGrowthPct + dividendYieldPct) / pe
+  fairPe           Float? // ≈ epsGrowthPct
+  lynchCategory    LynchCategory?
+  marketCap        BigInt?
+  eps              Float?
+  epsGrowth5y      Float?
+  revenueGrowth5y  Float?
+  dividendYield    Float?
+  debtToEquity     Float?
+  roe              Float?
+  profitMargin     Float?
+  beta             Float?
+  priceToBook      Float?
+  syncedAt         DateTime
+  dataQualityFlags Json           @default("{}")
+
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+}
+
+/// Short-lived cache of latest delayed quote — populated by /api/quote and reused
+/// for in-memory dedup across pages. Real source of truth is the live fetcher.
+model QuoteCache {
+  symbol      String   @id
+  price       Float
+  change      Float?
+  changePct   Float?
+  volume      BigInt?
+  marketState String?
+  fetchedAt   DateTime
+}
+
+model FXRate {
+  id    String   @id @default(cuid())
+  base  String
+  quote String
+  rate  Float
+  asOf  DateTime
+
+  @@unique([base, quote, asOf])
+  @@index([base, quote])
+}
+
+/// Daily closes — populated only for symbols held in any portfolio + symbols on any
+/// watchlist + benchmarks (^NSEI, ^GSPC). Not the full universe.
+model PriceHistory {
+  stockId String
+  date    DateTime
+  close   Float
+
+  @@id([stockId, date])
+  @@index([stockId])
+}
+
+// ─── Watchlists ─────────────────────────────────────────────────────────────
+
+model Watchlist {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items WatchlistItem[]
+
+  @@index([userId])
+}
+
+model WatchlistItem {
+  id          String   @id @default(cuid())
+  watchlistId String
+  stockId     String
+  note        String?
+  addedAt     DateTime @default(now())
+
+  watchlist Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  stock     Stock     @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, stockId])
+  @@index([watchlistId])
+  @@index([stockId])
+}
+
+// ─── Alerts ─────────────────────────────────────────────────────────────────
+
+enum AlertType {
+  PRICE_ABOVE
+  PRICE_BELOW
+  PE_BELOW
+  PEG_BELOW
+  MOVE_PCT
+}
+
+model Alert {
+  id                String    @id @default(cuid())
+  userId            String
+  stockId           String
+  type              AlertType
+  threshold         Float
+  isActive          Boolean   @default(true)
+  triggeredAt       DateTime?
+  lastEvaluatedAt   DateTime?
+  /// Hours after firing before this alert can re-fire. 0 = one-shot (auto-disable).
+  rearmAfterHours   Int       @default(0)
+  createdAt         DateTime  @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  stock Stock @relation(fields: [stockId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@index([stockId])
+}
+
+// ─── Portfolio ──────────────────────────────────────────────────────────────
+
+enum TransactionType {
+  BUY
+  SELL
+}
+
+model Portfolio {
+  id           String   @id @default(cuid())
+  userId       String
+  name         String
+  baseCurrency String   @default("USD")
+  /// Yahoo symbol of the comparison index — typically ^GSPC (S&P 500) or ^NSEI (NIFTY 50).
+  benchmark    String   @default("^GSPC")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([userId])
+}
+
+model Transaction {
+  id          String          @id @default(cuid())
+  portfolioId String
+  stockId     String
+  type        TransactionType
+  /// Number of shares. Use Float to allow fractional shares (Robinhood-style).
+  quantity    Float
+  /// Per-share price in `currency`.
+  price       Float
+  /// Brokerage / commission, in `currency`. Adds to BUY cost; subtracts from SELL proceeds.
+  fees        Float           @default(0)
+  /// Currency the trade was executed in (matches Stock.currency by convention).
+  currency    String
+  executedAt  DateTime
+  note        String?
+  createdAt   DateTime        @default(now())
+
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  stock     Stock     @relation(fields: [stockId], references: [id], onDelete: Restrict)
+
+  @@index([portfolioId, executedAt])
+  @@index([stockId])
+}
