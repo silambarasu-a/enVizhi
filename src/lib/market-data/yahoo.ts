@@ -268,6 +268,12 @@ export const yahooProvider: MarketDataProvider = {
 
   async runScreen(id: ScreenId, opts) {
     const count = Math.min(Math.max(opts?.count ?? 25, 5), 50);
+    const region = opts?.region ?? "US";
+
+    if (region === "IN") {
+      return runIndianScreen(id, count);
+    }
+
     // yahoo-finance2's `PredefinedScreenerModules` union is incomplete (missing
     // `trending_now` and a few others Yahoo actually accepts). Cast scrIds
     // through any to bypass the lib's typing while still validating at our
@@ -276,7 +282,7 @@ export const yahooProvider: MarketDataProvider = {
     const result = (await yahooFinance.screener({
       scrIds: id as any,
       count,
-      region: opts?.region ?? "US",
+      region,
     })) as {
       quotes?: Array<{
         symbol?: string;
@@ -372,6 +378,74 @@ export const yahooProvider: MarketDataProvider = {
     };
   },
 };
+
+/**
+ * Indian counterpart to Yahoo's predefined screens. Yahoo's `region` param
+ * doesn't filter the predefined screens server-side (they stay US-locked), so
+ * for India we rank NIFTY 50 components by the signal that best matches each
+ * screen's intent. The two fundamentals-based screens (`undervalued_large_caps`,
+ * `growth_technology_stocks`) would need per-ticker quoteSummary fetches to
+ * rank correctly — they're left empty here and the UI marks them US-only.
+ */
+async function runIndianScreen(id: ScreenId, count: number): Promise<SearchMatch[]> {
+  // No clean NIFTY-50 ranking for these without N extra fundamentals fetches.
+  if (id === "undervalued_large_caps" || id === "growth_technology_stocks") {
+    return [];
+  }
+
+  const symbols = NIFTY_50.map((n) => n.symbol);
+  const quotes = (await yahooFinance.quote(symbols)) as RawQuote | RawQuote[];
+  const list = Array.isArray(quotes) ? quotes : [quotes];
+  const nameMap = new Map(NIFTY_50.map((n) => [n.symbol, n.name]));
+
+  type Ranked = {
+    symbol: string;
+    name: string;
+    currency: string | null;
+    volume: number;
+    changePct: number;
+    absChangePct: number;
+  };
+
+  const ranked: Ranked[] = list
+    .map((q) => ({
+      symbol: q.symbol,
+      name: nameMap.get(q.symbol) ?? q.symbol,
+      currency: q.currency ?? "INR",
+      volume: Number(q.regularMarketVolume ?? 0),
+      changePct: Number(q.regularMarketChangePercent ?? 0),
+      absChangePct: Math.abs(Number(q.regularMarketChangePercent ?? 0)),
+    }))
+    .filter((r) => Number.isFinite(r.changePct));
+
+  let sorted: Ranked[];
+  switch (id) {
+    case "most_actives":
+      sorted = ranked.slice().sort((a, b) => b.volume - a.volume);
+      break;
+    case "day_gainers":
+      sorted = ranked.slice().sort((a, b) => b.changePct - a.changePct);
+      break;
+    case "day_losers":
+      sorted = ranked.slice().sort((a, b) => a.changePct - b.changePct);
+      break;
+    case "trending_now":
+      // No "trending" feed for India; closest proxy is highest absolute move
+      // (the names being talked about today).
+      sorted = ranked.slice().sort((a, b) => b.absChangePct - a.absChangePct);
+      break;
+    default:
+      sorted = ranked;
+  }
+
+  return sorted.slice(0, count).map<SearchMatch>((r) => ({
+    symbol: r.symbol,
+    name: r.name,
+    exchange: "NSE",
+    currency: r.currency,
+    isSupported: true,
+  }));
+}
 
 /** Map Yahoo's cryptic exchange codes to a friendly label + whether it
  *  matches one of our supported `Exchange` enum values. */

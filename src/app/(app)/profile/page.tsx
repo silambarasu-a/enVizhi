@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { Mail, Lock, ShieldCheck, ShieldAlert, Clock } from "lucide-react";
 import { auth } from "@/lib/auth";
+import { LocalTime } from "@/components/util/local-time";
 import { prisma } from "@/lib/prisma";
 import { APP_CONFIG, EMAIL_VERIFICATION_GRACE_MS } from "@/lib/config";
 import { PasswordForm } from "@/components/settings/password-form";
@@ -54,7 +55,7 @@ export default async function ProfilePage() {
               <p>
                 Verify your email by{" "}
                 <span className="font-mono text-foreground">
-                  {formatDate(status.deadline)}
+                  <LocalTime iso={status.deadline.toISOString()} mode="date-long" />
                 </span>
                 {" "}— that&apos;s{" "}
                 <span className="font-medium text-foreground">
@@ -75,7 +76,7 @@ export default async function ProfilePage() {
             </div>
           ) : status.verifiedAt ? (
             <p className="text-[11px] text-muted-foreground">
-              Verified {formatDate(status.verifiedAt)}
+              Verified <LocalTime iso={status.verifiedAt.toISOString()} mode="date-long" />
             </p>
           ) : null}
 
@@ -100,7 +101,7 @@ export default async function ProfilePage() {
       </Section>
 
       <p className="text-[11px] text-muted-foreground/70 text-center pt-4">
-        Account created {formatDate(user.createdAt)}
+        Account created <LocalTime iso={user.createdAt.toISOString()} mode="date-long" />
       </p>
     </div>
   );
@@ -159,14 +160,6 @@ function VerificationBadge({ status }: { status: VerificationState }) {
       {status.daysRemaining}d left
     </span>
   );
-}
-
-function formatDate(d: Date) {
-  return d.toLocaleDateString("en-US", {
-    month: "long",
-    day: "numeric",
-    year: "numeric",
-  });
 }
 
 function Section({

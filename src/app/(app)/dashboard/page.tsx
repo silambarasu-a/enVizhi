@@ -180,8 +180,8 @@ export default async function DashboardPage() {
           <MarketsRegionToggle current={region} />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <MoverCard kind="up" rows={topGainers} highlight={topGainer} />
-          <MoverCard kind="down" rows={topLosers} highlight={topLoser} />
+          <MoverCard kind="up" rows={topGainers} highlight={topGainer} region={region} />
+          <MoverCard kind="down" rows={topLosers} highlight={topLoser} region={region} />
         </div>
       </section>
     </div>
@@ -485,31 +485,46 @@ function MoverCard({
   kind,
   rows,
   highlight,
+  region,
 }: {
   kind: "up" | "down";
   rows: Array<{ symbol: string; name: string; price: number; changePct: number; currency: string }>;
   highlight?: { symbol: string; changePct: number } | undefined;
+  region: MarketsRegion;
 }) {
   const accentClass =
     kind === "up"
       ? "text-emerald-700 dark:text-emerald-400"
       : "text-rose-700 dark:text-rose-400";
   const Icon = kind === "up" ? TrendingUp : TrendingDown;
+  // Hand off to the screener pre-filtered to this region's exchanges and with
+  // the matching Discover chip pre-selected so the user can one-click expand
+  // beyond the dashboard's 5-row preview.
+  const exchanges = region === "IN" ? "NSE,BSE" : "NASDAQ,NYSE";
+  const discoverScreen = kind === "up" ? "day_gainers" : "day_losers";
+  const viewAllHref = `/screener?exchange=${exchanges}&discoverRegion=${region}&discoverScreen=${discoverScreen}`;
   return (
     <div className="rounded-2xl border border-border bg-card shadow-card overflow-hidden">
-      <div className="px-5 py-4 flex items-center justify-between border-b border-border">
-        <div className="flex items-center gap-2">
+      <div className="px-5 py-4 flex items-center justify-between gap-3 border-b border-border">
+        <div className="flex items-center gap-2 min-w-0">
           <Icon className={`size-4 ${accentClass}`} />
-          <span className="text-sm font-medium">
+          <span className="text-sm font-medium truncate">
             Top {kind === "up" ? "gainers" : "losers"}
           </span>
+          {highlight ? (
+            <span className={`hidden md:inline font-mono text-[11px] ${accentClass} ml-1.5`}>
+              {highlight.symbol} {highlight.changePct >= 0 ? "+" : ""}
+              {highlight.changePct.toFixed(2)}%
+            </span>
+          ) : null}
         </div>
-        {highlight ? (
-          <span className={`font-mono text-[11px] ${accentClass}`}>
-            {highlight.symbol} {highlight.changePct >= 0 ? "+" : ""}
-            {highlight.changePct.toFixed(2)}%
-          </span>
-        ) : null}
+        <Link
+          href={viewAllHref}
+          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors shrink-0"
+        >
+          View all
+          <ArrowRight className="size-3" />
+        </Link>
       </div>
       {rows.length === 0 ? (
         <div className="px-5 py-8 text-center text-xs text-muted-foreground">

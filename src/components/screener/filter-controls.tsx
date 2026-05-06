@@ -6,6 +6,7 @@ import { ChevronDown, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   NUMERIC_FIELDS,
+  NUMERIC_FIELD_IDS,
   EXCHANGES,
   LYNCH_CATEGORIES,
   LYNCH_LABEL,
@@ -14,6 +15,19 @@ import {
   type LynchCategoryId,
 } from "@/lib/screener/fields";
 import { filterFromSearchParams, filterToSearchParams } from "@/lib/screener/dsl";
+
+/** Mirrors the same set in results-table.tsx — keys the filter system owns. */
+const FILTER_OWNED_KEYS = new Set<string>([
+  ...NUMERIC_FIELD_IDS.flatMap((id) => [`${id}.min`, `${id}.max`]),
+  "exchange",
+  "sector",
+  "lynch",
+  "q",
+  "sort",
+  "dir",
+  "page",
+  "pageSize",
+]);
 
 const GROUPS = ["Valuation", "Growth", "Quality", "Risk"] as const;
 
@@ -34,9 +48,17 @@ export function FilterControls({ sectors }: { sectors: string[] }) {
   const filter = filterFromSearchParams(Object.fromEntries(searchParams.entries()));
 
   function commit(next: typeof filter) {
-    const sp = filterToSearchParams(next);
+    // Layer non-filter URL params (Discover region/chip etc.) back into the
+    // rewrite so changing a filter doesn't strip unrelated state.
+    const merged = filterToSearchParams(next);
+    searchParams.forEach((value, key) => {
+      if (!FILTER_OWNED_KEYS.has(key) && !merged.has(key)) {
+        merged.set(key, value);
+      }
+    });
     startTransition(() => {
-      router.replace(`${pathname}?${sp.toString()}`, { scroll: false });
+      const qs = merged.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     });
   }
 

@@ -13,6 +13,7 @@ import { PriceChart } from "@/components/stock/price-chart";
 import { AddToWatchlist } from "@/components/watchlists/add-to-watchlist";
 import { CreateAlertForm } from "@/components/alerts/create-alert-form";
 import { AlertRow } from "@/components/alerts/alert-row";
+import { LocalTime } from "@/components/util/local-time";
 
 export const dynamic = "force-dynamic";
 
@@ -217,7 +218,8 @@ export default async function StockDetailPage({
 
       {f?.syncedAt ? (
         <p className="text-[11px] text-muted-foreground/70 text-center">
-          Fundamentals synced {new Date(f.syncedAt).toLocaleString()} · Quotes delayed 15 min
+          Fundamentals synced{" "}
+          <LocalTime iso={f.syncedAt.toISOString()} mode="datetime" /> · Quotes delayed 15 min
         </p>
       ) : null}
     </div>

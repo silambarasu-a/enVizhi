@@ -2,11 +2,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Search } from "lucide-react";
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { filterFromSearchParams } from "@/lib/screener/dsl";
 import { listSectors, runScreener } from "@/lib/screener/query";
 import { FilterControls } from "@/components/screener/filter-controls";
 import { ResultsTable, type ScreenerTableRow } from "@/components/screener/results-table";
 import { DiscoverPanel } from "@/components/screener/discover-panel";
+import type { MarketsRegion } from "@/generated/prisma/enums";
 
 export const dynamic = "force-dynamic";
 
@@ -22,10 +24,15 @@ export default async function ScreenerPage({
   const sp = await searchParams;
   const filter = filterFromSearchParams(sp);
 
-  const [{ rows, total, page, pageSize }, sectors] = await Promise.all([
+  const [{ rows, total, page, pageSize }, sectors, userMeta] = await Promise.all([
     runScreener(filter, userId),
     listSectors(userId),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { marketsRegion: true },
+    }),
   ]);
+  const defaultRegion: MarketsRegion = userMeta?.marketsRegion ?? "US";
 
   // BigInt isn't serializable across the Server → Client boundary; convert
   // marketCap to string here so the table can render it.
@@ -56,6 +63,16 @@ export default async function ScreenerPage({
       : null,
   }));
 
+  // Most recent fundamentals sync across the visible page — surfaced as a
+  // "Data as of" indicator so users know how fresh the table is, especially
+  // when the market is closed (Yahoo returns last-close data, which is what
+  // gets persisted on sync).
+  const latestSyncedAt = rows
+    .map((r) => r.fundamentals?.syncedAt ?? null)
+    .filter((d): d is Date => d != null)
+    .reduce<Date | null>((max, d) => (max == null || d > max ? d : max), null);
+  const latestSyncedAtIso = latestSyncedAt ? latestSyncedAt.toISOString() : null;
+
   // True when user has truly nothing — no stocks at all in their universe yet.
   // Distinct from "filtered to zero" (where total drops because of strict
   // filters). For empty-state we look at unfiltered totals via a count.
@@ -77,7 +94,7 @@ export default async function ScreenerPage({
         </p>
       </header>
 
-      <DiscoverPanel />
+      <DiscoverPanel defaultRegion={defaultRegion} />
 
       {!hasAnyStock ? (
         <div className="rounded-2xl border border-dashed border-border bg-card/40 p-10 text-center">
@@ -100,7 +117,13 @@ export default async function ScreenerPage({
           <div className="rounded-2xl border border-border bg-card p-5 shadow-card h-fit lg:sticky lg:top-20">
             <FilterControls sectors={sectors} />
           </div>
-          <ResultsTable rows={tableRows} total={total} page={page} pageSize={pageSize} />
+          <ResultsTable
+            rows={tableRows}
+            total={total}
+            page={page}
+            pageSize={pageSize}
+            latestSyncedAt={latestSyncedAtIso}
+          />
         </div>
       )}
     </div>

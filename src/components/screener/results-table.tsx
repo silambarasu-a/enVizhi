@@ -34,7 +34,24 @@ import {
   filterFromSearchParams,
   filterToSearchParams,
 } from "@/lib/screener/dsl";
-import type { SortableField } from "@/lib/screener/fields";
+import { NUMERIC_FIELD_IDS, type SortableField } from "@/lib/screener/fields";
+
+/**
+ * URL keys that the filter system owns. When pagination / sort rewrites the
+ * URL, we preserve unrelated keys (e.g. the Discover panel's region/chip) but
+ * must NOT preserve stale filter keys that the new filter has dropped.
+ */
+const FILTER_OWNED_KEYS = new Set<string>([
+  ...NUMERIC_FIELD_IDS.flatMap((id) => [`${id}.min`, `${id}.max`]),
+  "exchange",
+  "sector",
+  "lynch",
+  "q",
+  "sort",
+  "dir",
+  "page",
+  "pageSize",
+]);
 
 const COLUMNS: Array<{
   id: SortableField | "name";
@@ -88,16 +105,34 @@ export function ResultsTable({
   total,
   page,
   pageSize,
+  latestSyncedAt,
 }: {
   rows: ScreenerTableRow[];
   total: number;
   page: number;
   pageSize: number;
+  /** ISO string of the most recent fundamentals sync across the visible page. */
+  latestSyncedAt: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
   const filter = filterFromSearchParams(Object.fromEntries(sp.entries()));
+
+  function pushFilter(next: typeof filter) {
+    // Build the canonical filter URL, then layer back any *non-filter* params
+    // (e.g. `discoverRegion`, `discoverScreen` from the Discover panel) so
+    // sort / pagination doesn't wipe state owned by other components.
+    const filterParams = filterToSearchParams(next);
+    const filterKeys = new Set(filterParams.keys());
+    sp.forEach((value, key) => {
+      if (!filterKeys.has(key) && !FILTER_OWNED_KEYS.has(key) && !filterParams.has(key)) {
+        filterParams.set(key, value);
+      }
+    });
+    const qs = filterParams.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }
 
   function setSort(col: SortableField) {
     let nextDir: "asc" | "desc";
@@ -106,13 +141,11 @@ export function ResultsTable({
     } else {
       nextDir = "asc";
     }
-    const next = { ...filter, sort: col, dir: nextDir, page: 1 };
-    router.replace(`${pathname}?${filterToSearchParams(next).toString()}`, { scroll: false });
+    pushFilter({ ...filter, sort: col, dir: nextDir, page: 1 });
   }
 
   function setPage(p: number) {
-    const next = { ...filter, page: p };
-    router.replace(`${pathname}?${filterToSearchParams(next).toString()}`, { scroll: false });
+    pushFilter({ ...filter, page: p });
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -120,10 +153,21 @@ export function ResultsTable({
   return (
     <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-card">
       {/* Header bar */}
-      <div className="px-5 py-4 border-b border-border flex items-center justify-between text-sm">
-        <div className="text-muted-foreground">
-          <span className="font-mono tabular-nums text-foreground">{total.toLocaleString()}</span>{" "}
-          results
+      <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-4 text-sm">
+        <div className="flex items-baseline gap-3 min-w-0">
+          <div className="text-muted-foreground whitespace-nowrap">
+            <span className="font-mono tabular-nums text-foreground">{total.toLocaleString()}</span>{" "}
+            results
+          </div>
+          {latestSyncedAt ? (
+            <div
+              className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-muted-foreground"
+              title={`Fundamentals last synced ${new Date(latestSyncedAt).toLocaleString()}`}
+            >
+              <span className="size-1.5 rounded-full bg-emerald-500" />
+              <span>Data as of {formatAsOf(latestSyncedAt)}</span>
+            </div>
+          ) : null}
         </div>
         <Pager page={page} totalPages={totalPages} onChange={setPage} />
       </div>
@@ -289,6 +333,18 @@ function formatLynch(cat: string | null) {
       {labels[cat] ?? cat}
     </span>
   );
+}
+
+function formatAsOf(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const now = new Date();
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (dayDiff === 0) return `today, ${time}`;
+  if (dayDiff === 1) return `yesterday, ${time}`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function formatMarketCap(cap: string | null | undefined, currency: string) {

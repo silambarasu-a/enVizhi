@@ -128,8 +128,9 @@ export function LynchCard({
                   isDiscount ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
                 }`}
               >
-                {isDiscount ? "+" : ""}
-                {upside.toFixed(1)}% upside
+                {isDiscount
+                  ? `+${upside.toFixed(1)}% upside`
+                  : `${Math.abs(upside).toFixed(1)}% downside`}
               </span>
             ) : null}
           </div>

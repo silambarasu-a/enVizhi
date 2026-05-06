@@ -40,7 +40,10 @@ export async function importYahooScreen(formData: FormData) {
     return { error: "Unknown screen" };
   }
 
-  const matches = await provider.runScreen(id, { count: 25 }).catch(() => []);
+  const regionRaw = String(formData.get("region") ?? "US");
+  const region: "US" | "IN" = regionRaw === "IN" ? "IN" : "US";
+
+  const matches = await provider.runScreen(id, { count: 25, region }).catch(() => []);
   const supported = matches.filter((m) => m.isSupported);
 
   // Skip stocks already in DB to keep this fast — we only need to lazy-create
