@@ -40,7 +40,6 @@ export default async function StockDetailPage({
   if (!stock) notFound();
 
   const f = stock.fundamentals;
-  const currency = stock.currency;
   const isIndex = stock.exchange === "INDEX";
 
   const [quote, ohlc, watchlists, alerts] = await Promise.all([
@@ -73,6 +72,24 @@ export default async function StockDetailPage({
   const change = quote?.change ?? null;
   const changePct = quote?.changePct ?? null;
   const isUp = (changePct ?? 0) >= 0;
+
+  // For indices, prefer the live quote's currency over whatever's in the DB —
+  // older index rows were saved with USD because Yahoo's search doesn't always
+  // surface a currency for indices, leaving every formatted price ($, ₹, £)
+  // displayed under the wrong symbol. Backfill the row so we only do this dance
+  // once per stale entry.
+  let currency = stock.currency;
+  if (isIndex && quote?.currency && quote.currency !== stock.currency) {
+    currency = quote.currency;
+    await prisma.stock
+      .update({
+        where: { id: stock.id },
+        data: { currency: quote.currency },
+      })
+      .catch(() => {
+        /* race with another tab — harmless */
+      });
+  }
 
   const modPeg = f ? modifiedPEG(f.pe, f.epsGrowth5y, f.dividendYield) : null;
   const fp = f ? fairPE(f.epsGrowth5y) : null;

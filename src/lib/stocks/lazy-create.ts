@@ -41,12 +41,22 @@ export async function findOrCreateStock(symbolRaw: string) {
   // mostly nulls for ^NSEI / ^GSPC etc., and the metrics that exist (P/E of the
   // underlying basket) don't compose with our equity-oriented score model.
   if (match.isIndex) {
+    // Yahoo's search() often returns no currency for indices; fall back to a
+    // hardcoded map keyed off the symbol prefix. If that misses, fetch a live
+    // quote (always returns currency) — and only then default to USD. Storing
+    // the wrong currency makes every formatted price on the index detail page
+    // (52w hi/lo, SMAs, fair value) display the wrong symbol forever.
+    let currency = match.currency ?? currencyForIndexSymbol(symbol);
+    if (!currency) {
+      const liveQuote = await provider.getQuote(symbol).catch(() => null);
+      currency = liveQuote?.currency ?? "USD";
+    }
     return prisma.stock.create({
       data: {
         symbol,
         name: match.name,
         exchange, // "INDEX"
-        currency: match.currency ?? "USD",
+        currency,
         sector: null,
       },
       include: { fundamentals: true },
@@ -146,4 +156,26 @@ function exchangeFromLabel(label: string): Exchange | null {
 
 function defaultCurrencyForExchange(ex: Exchange): string {
   return ex === "NSE" || ex === "BSE" ? "INR" : "USD";
+}
+
+/**
+ * Best-guess currency for known market-index symbols. Returns null when the
+ * symbol isn't on the list — caller falls back to a live quote fetch.
+ *
+ * Source of truth: Yahoo Finance quote responses for each ticker. Keep in sync
+ * with `lib/benchmarks.ts` whenever a new benchmark is added.
+ */
+function currencyForIndexSymbol(symbol: string): string | null {
+  const s = symbol.toUpperCase();
+  // India
+  if (s === "^NSEI" || s === "^BSESN" || s === "^NSEBANK" || s === "^CNXIT") return "INR";
+  if (s.startsWith("NIFTY") || s.endsWith(".NS") || s.endsWith(".BO")) return "INR";
+  // United States
+  if (s === "^GSPC" || s === "^DJI" || s === "^IXIC" || s === "^NDX" || s === "^RUT") return "USD";
+  // Other globals
+  if (s === "^FTSE") return "GBP";
+  if (s === "^N225") return "JPY";
+  if (s === "^HSI") return "HKD";
+  if (s === "^GDAXI" || s === "^STOXX50E") return "EUR";
+  return null;
 }
