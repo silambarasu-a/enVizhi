@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { TrendingUp, TrendingDown, ArrowRight, Plus, Star, Bell } from "lucide-react";
+import { unstable_cache } from "next/cache";
+import pLimit from "p-limit";
+import { TrendingUp, TrendingDown, ArrowRight, Plus, Star, Bell, Trophy } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { provider } from "@/lib/market-data/router";
@@ -8,6 +10,15 @@ import { ALERT_TYPE_LABEL } from "@/lib/alerts/evaluator";
 import { VerifyEmailBanner } from "@/components/auth/verify-email-banner";
 import { MarketsRegionToggle } from "@/components/dashboard/markets-region-toggle";
 import type { MarketsRegion } from "@/generated/prisma/enums";
+// Reuses the exact same scoring stack the stock detail page renders — no
+// re-implementation. The dashboard ranking == sort by `combineScores().value`
+// across the universe.
+import { scoreFundamentals } from "@/lib/scoring/fundamentals";
+import { scoreTechnical } from "@/lib/scoring/technical";
+import { scoreLynch } from "@/lib/scoring/lynch";
+import { combineScores } from "@/lib/scoring/overall";
+import { lynchFairValue } from "@/lib/lynch/score";
+import { SIGNAL_LABEL, type Signal } from "@/lib/scoring/types";
 
 // Per-user content + live quotes — always render fresh on the server.
 // `revalidate` deliberately omitted: combining it with `force-dynamic` is
@@ -43,6 +54,7 @@ export default async function DashboardPage() {
     watchlists,
     alerts,
     yahooMovers,
+    topPicks,
   ] = await Promise.all([
     prisma.stock.findMany({
       where: {
@@ -97,6 +109,7 @@ export default async function DashboardPage() {
       },
     }),
     fetchMoversSafe(region, 5),
+    getTopPicks(region).catch(() => [] as TopPick[]),
   ]);
 
   const latestSync = fundamentalsAgg._max.syncedAt;
@@ -184,6 +197,9 @@ export default async function DashboardPage() {
           <MoverCard kind="down" rows={topLosers} highlight={topLoser} region={region} />
         </div>
       </section>
+
+      {/* ── Top picks (ranked by overall Buy/Hold/Sell score) ── */}
+      <TopPicksSection picks={topPicks} region={region} />
     </div>
   );
 }
@@ -206,6 +222,114 @@ async function fetchMoversSafe(region: MarketsRegion, count: number) {
     return { gainers: [], losers: [] };
   }
 }
+
+// ─── Top picks (reuses the stock-detail scoring stack verbatim) ─────────
+//
+//   Iterates every non-index Stock with fundamentals, runs the *exact same*
+//   four scorers the detail page uses (scoreFundamentals + scoreTechnical +
+//   scoreLynch + combineScores) and ranks by overall.value desc. No new
+//   scoring logic — the orchestration just calls the existing modules.
+//
+//   Wrapped in `unstable_cache` with 1-hour TTL because:
+//     - It's not user-specific (the universe is shared)
+//     - Each call fetches OHLC + quote per stock (~80 stocks → ~3s if cold)
+//     - Recommendations don't need to update more often than hourly
+//
+//   Cap of 100 stocks keeps tail latency bounded. p-limit(8) keeps Yahoo
+//   request concurrency reasonable.
+
+interface TopPick {
+  symbol: string;
+  name: string;
+  exchange: string;
+  currency: string;
+  price: number | null;
+  changePct: number | null;
+  score: number;
+  signal: Signal;
+}
+
+const getTopPicks = unstable_cache(
+  async (region: MarketsRegion): Promise<TopPick[]> => {
+    // Filter by exchange so the dashboard's region toggle controls which
+    // market the picks are drawn from. `unstable_cache` includes function
+    // args in the cache key automatically, so US picks and IN picks each
+    // get their own 1-hour cache slot.
+    const exchanges: Array<"NSE" | "BSE" | "NASDAQ" | "NYSE"> =
+      region === "IN" ? ["NSE", "BSE"] : ["NASDAQ", "NYSE"];
+    const stocks = await prisma.stock.findMany({
+      where: {
+        isActive: true,
+        exchange: { in: exchanges },
+        fundamentals: { isNot: null },
+      },
+      include: { fundamentals: true },
+      take: 100,
+    });
+
+    const limit = pLimit(8);
+    const results = await Promise.all(
+      stocks.map((s) =>
+        limit(async (): Promise<TopPick | null> => {
+          const f = s.fundamentals;
+          if (!f) return null;
+
+          const [ohlc, quote] = await Promise.all([
+            provider.getOHLC(s.symbol, "5y").catch(() => []),
+            provider.getQuote(s.symbol).catch(() => null),
+          ]);
+
+          const bars = ohlc.map((b) => ({ date: b.date.toISOString(), close: b.close }));
+
+          // Same calls the stock detail page makes, in the same order.
+          const fundamentalsScore = scoreFundamentals({
+            pe: f.pe,
+            peg: f.peg,
+            priceToBook: f.priceToBook,
+            dividendYield: f.dividendYield,
+            epsGrowth5y: f.epsGrowth5y,
+            revenueGrowth5y: f.revenueGrowth5y,
+            roe: f.roe,
+            profitMargin: f.profitMargin,
+            debtToEquity: f.debtToEquity,
+            beta: f.beta,
+          });
+          const technicalScore = scoreTechnical(bars);
+          const fairVal = lynchFairValue(f.eps, f.epsGrowth5y);
+          const lynchResult = scoreLynch({
+            price: quote?.price ?? null,
+            fairValue: fairVal,
+          });
+          const overall = combineScores({
+            fundamentals: fundamentalsScore,
+            technical: technicalScore,
+            lynch: lynchResult,
+          });
+
+          if (overall.value == null || overall.signal == null) return null;
+
+          return {
+            symbol: s.symbol,
+            name: s.name,
+            exchange: s.exchange,
+            currency: s.currency,
+            price: quote?.price ?? null,
+            changePct: quote?.changePct ?? null,
+            score: overall.value,
+            signal: overall.signal,
+          };
+        }),
+      ),
+    );
+
+    return results
+      .filter((r): r is TopPick => r != null)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+  },
+  ["dashboard-top-picks-v2"],
+  { revalidate: 3600, tags: ["top-picks"] },
+);
 
 function greeting() {
   const hour = new Date().getHours();
@@ -557,5 +681,108 @@ function MoverCard({
         </ul>
       )}
     </div>
+  );
+}
+
+// ─── Top picks section ─────────────────────────────────────────────────
+
+function TopPicksSection({ picks, region }: { picks: TopPick[]; region: MarketsRegion }) {
+  return (
+    <section className="rounded-2xl border border-border bg-card shadow-card overflow-hidden">
+      <div className="px-5 py-4 flex items-center justify-between gap-3 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Trophy className="size-4 text-primary" />
+          <div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+              Today&apos;s top picks
+            </div>
+            <h2 className="text-sm font-medium mt-0.5">
+              Ranked by overall signal · same scoring as the stock detail page
+            </h2>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 shrink-0">
+          <p className="hidden md:block text-[10px] text-muted-foreground/70 italic">
+            Refreshes hourly
+          </p>
+          <MarketsRegionToggle current={region} />
+        </div>
+      </div>
+      {picks.length === 0 ? (
+        <div className="px-5 py-8 text-center text-xs text-muted-foreground">
+          No scoreable {region === "IN" ? "Indian" : "US"} stocks in the universe yet — search a
+          ticker via ⌘K to add to the pool.
+        </div>
+      ) : (
+      <ol className="divide-y divide-border">
+        {picks.map((p, i) => (
+          <li key={p.symbol}>
+            <Link
+              href={`/stock/${encodeURIComponent(p.symbol)}`}
+              className="flex items-center gap-3 px-5 py-3 hover:bg-secondary/40 transition-colors"
+            >
+              <span className="font-mono tabular-nums text-[11px] text-muted-foreground w-6 shrink-0">
+                #{i + 1}
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <span className="font-mono text-[13px]">{p.symbol}</span>
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-border bg-secondary text-muted-foreground font-mono">
+                    {p.exchange}
+                  </span>
+                </div>
+                <div className="text-[11px] text-muted-foreground truncate">{p.name}</div>
+              </div>
+              <div className="text-right shrink-0">
+                {p.price != null ? (
+                  <div className="font-mono tabular-nums text-[13px]">
+                    {formatCurrency(p.price, p.currency)}
+                  </div>
+                ) : null}
+                {p.changePct != null ? (
+                  <div
+                    className={`font-mono tabular-nums text-[11px] ${
+                      p.changePct >= 0
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : "text-rose-700 dark:text-rose-400"
+                    }`}
+                  >
+                    {p.changePct >= 0 ? "+" : ""}
+                    {p.changePct.toFixed(2)}%
+                  </div>
+                ) : null}
+              </div>
+              <div className="shrink-0 flex flex-col items-end gap-1">
+                <SignalPill signal={p.signal} />
+                <div className="font-mono text-[11px] tabular-nums text-muted-foreground">
+                  {p.score}/100
+                </div>
+              </div>
+            </Link>
+          </li>
+        ))}
+      </ol>
+      )}
+    </section>
+  );
+}
+
+function SignalPill({ signal }: { signal: Signal }) {
+  const cls =
+    signal === "buy"
+      ? "border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40"
+      : signal === "accumulate"
+        ? "border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/20"
+        : signal === "hold"
+          ? "border-border text-muted-foreground bg-secondary"
+          : signal === "reduce"
+            ? "border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40"
+            : "border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40";
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-medium border ${cls}`}
+    >
+      {SIGNAL_LABEL[signal]}
+    </span>
   );
 }

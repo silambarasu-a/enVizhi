@@ -4,6 +4,7 @@ import type {
   MarketMovers,
   MoverEntry,
   NormalizedFundamentals,
+  NormalizedInsights,
   NormalizedQuote,
   OHLCBar,
   OHLCRange,
@@ -84,7 +85,17 @@ const yahooFinance = new YahooFinance({
   validation: { logErrors: false, logOptionsErrors: false },
 });
 
-const RANGE_TO_PERIOD: Record<OHLCRange, { period1: Date; interval: "1d" | "1wk" }> = {
+/** Yahoo intraday intervals work only on short windows: 1m up to 7d, 5m/15m
+ *  up to 60d, 30m/60m up to ~730d. Outside those windows Yahoo returns 422. */
+const RANGE_TO_PERIOD: Record<
+  OHLCRange,
+  { period1: Date; interval: "5m" | "30m" | "1d" | "1wk" }
+> = {
+  // Intraday — overshoot the window slightly so we always pick up the most
+  // recent session (Yahoo can lag by a few minutes after close).
+  "1d": { period1: daysAgo(2), interval: "5m" },
+  "1w": { period1: daysAgo(8), interval: "30m" },
+  // Daily / weekly bars.
   "1mo": { period1: daysAgo(30), interval: "1d" },
   "3mo": { period1: daysAgo(91), interval: "1d" },
   "6mo": { period1: daysAgo(183), interval: "1d" },
@@ -121,6 +132,15 @@ export const yahooProvider: MarketDataProvider = {
   async getFundamentals(symbol) {
     // yahoo-finance2's typings narrow to `never` for arbitrary module tuples;
     // cast to a permissive shape since we treat every field as optional anyway.
+    //
+    // We pull MORE modules than the obvious five so we can compute fallbacks
+    // when Yahoo doesn't surface the headline metric directly:
+    //   - earnings: yearly EPS series → compute 5y growth CAGR ourselves
+    //   - incomeStatementHistory: yearly revenue → compute 5y revenue growth
+    //   - balanceSheetHistory: shares outstanding → compute marketCap
+    //
+    // Fallbacks are non-destructive: if Yahoo's direct field is present we
+    // use that; only when it's null do we derive.
     const summary = (await yahooFinance.quoteSummary(symbol, {
       modules: [
         "summaryDetail",
@@ -128,6 +148,9 @@ export const yahooProvider: MarketDataProvider = {
         "financialData",
         "assetProfile",
         "price",
+        "earnings",
+        "incomeStatementHistory",
+        "balanceSheetHistory",
       ],
     })) as Record<string, Record<string, unknown> | undefined>;
 
@@ -136,22 +159,71 @@ export const yahooProvider: MarketDataProvider = {
     const f = summary.financialData ?? {};
     const a = summary.assetProfile ?? {};
     const p = summary.price ?? {};
+    const earnings = summary.earnings as
+      | { financialsChart?: { yearly?: Array<{ date?: string | number; earnings?: number; revenue?: number }> } }
+      | undefined;
+    const incomeHistory = summary.incomeStatementHistory as
+      | { incomeStatementHistory?: Array<{ totalRevenue?: number; netIncome?: number; endDate?: Date | string }> }
+      | undefined;
 
-    const pe = numOrNull(d.trailingPE) ?? numOrNull(k.trailingEps && p.regularMarketPrice ? Number(p.regularMarketPrice) / Number(k.trailingEps) : null);
+    const price = numOrNull(p.regularMarketPrice);
+
+    // ── Direct Yahoo values ─────────────────────────────────────────
+    const pe = numOrNull(d.trailingPE) ?? numOrNull(k.trailingEps && price ? price / Number(k.trailingEps) : null);
     const peg = numOrNull(k.pegRatio);
-    const eps = numOrNull(k.trailingEps);
-    const epsGrowth5y = numOrNull(f.earningsGrowth ? Number(f.earningsGrowth) * 100 : null);
-    const revenueGrowth5y = numOrNull(f.revenueGrowth ? Number(f.revenueGrowth) * 100 : null);
+    let eps = numOrNull(k.trailingEps);
     const dividendYield = numOrNull(d.dividendYield ? Number(d.dividendYield) * 100 : null);
     const debtToEquity = numOrNull(f.debtToEquity);
     const roe = numOrNull(f.returnOnEquity ? Number(f.returnOnEquity) * 100 : null);
     const profitMargin = numOrNull(f.profitMargins ? Number(f.profitMargins) * 100 : null);
     const beta = numOrNull(d.beta ?? k.beta);
     const priceToBook = numOrNull(k.priceToBook);
-    const marketCap = bigIntOrNull(p.marketCap);
     const sector = strOrNull(a.sector);
     const industry = strOrNull(a.industry);
     const currency = strOrNull(p.currency);
+
+    // ── Derived fallbacks ────────────────────────────────────────────
+    // EPS growth (5y CAGR from yearly earnings series).
+    let epsGrowth5y = numOrNull(f.earningsGrowth ? Number(f.earningsGrowth) * 100 : null);
+    if (epsGrowth5y == null) {
+      epsGrowth5y = computeYearlyCagr(
+        (earnings?.financialsChart?.yearly ?? []).map((y) => numOrNull(y.earnings)),
+      );
+    }
+
+    // Revenue growth (5y CAGR from yearly revenue series).
+    let revenueGrowth5y = numOrNull(f.revenueGrowth ? Number(f.revenueGrowth) * 100 : null);
+    if (revenueGrowth5y == null) {
+      const yearlyRev = (earnings?.financialsChart?.yearly ?? []).map((y) => numOrNull(y.revenue));
+      revenueGrowth5y = computeYearlyCagr(yearlyRev);
+    }
+    if (revenueGrowth5y == null) {
+      // Last resort: derive from annual income statements (oldest → newest).
+      const rev = (incomeHistory?.incomeStatementHistory ?? [])
+        .map((r) => numOrNull(r.totalRevenue))
+        .filter((v): v is number => v != null && v > 0)
+        .reverse(); // Yahoo returns newest first; flip so oldest→newest.
+      revenueGrowth5y = computeYearlyCagr(rev);
+    }
+
+    // Trailing EPS fallback: latest yearly earnings ÷ shares outstanding.
+    if (eps == null) {
+      const yearly = earnings?.financialsChart?.yearly ?? [];
+      const latestEarnings = numOrNull(yearly[yearly.length - 1]?.earnings);
+      const shares = numOrNull(k.sharesOutstanding) ?? numOrNull(d.sharesOutstanding);
+      if (latestEarnings != null && shares != null && shares > 0) {
+        eps = latestEarnings / shares;
+      }
+    }
+
+    // Market cap: prefer Yahoo's direct value; else compute from shares × price.
+    let marketCap = bigIntOrNull(p.marketCap);
+    if (marketCap == null) {
+      const shares = numOrNull(k.sharesOutstanding) ?? numOrNull(d.sharesOutstanding) ?? numOrNull(k.impliedSharesOutstanding);
+      if (shares != null && price != null && shares > 0 && price > 0) {
+        marketCap = bigIntOrNull(shares * price);
+      }
+    }
 
     const dataQualityFlags: Record<string, boolean> = {};
     if (flag(pe)) dataQualityFlags.pe = true;
@@ -393,7 +465,75 @@ export const yahooProvider: MarketDataProvider = {
       losers: hydrate(loserMatches),
     };
   },
+
+  async getInsights(symbol): Promise<NormalizedInsights | null> {
+    type RawInsights = {
+      recommendation?: { rating?: string; targetPrice?: number };
+      instrumentInfo?: {
+        keyTechnicals?: { support?: number; resistance?: number; stopLoss?: number };
+        technicalEvents?: {
+          shortTermOutlook?: { direction?: string; score?: number };
+          intermediateTermOutlook?: { direction?: string; score?: number };
+          longTermOutlook?: { direction?: string; score?: number };
+        };
+      };
+      sigDevs?: Array<{ headline?: string; date?: Date }>;
+    };
+    const raw = (await yahooFinance.insights(symbol).catch(() => null)) as RawInsights | null;
+    if (!raw) return null;
+
+    const ratingRaw = raw.recommendation?.rating;
+    const rating: "BUY" | "HOLD" | "SELL" | null =
+      ratingRaw === "BUY" || ratingRaw === "HOLD" || ratingRaw === "SELL" ? ratingRaw : null;
+    const tech = raw.instrumentInfo?.technicalEvents;
+
+    return {
+      recommendation: rating
+        ? { rating, targetPrice: numOrNull(raw.recommendation?.targetPrice) }
+        : null,
+      outlooks: {
+        short: normalizeOutlook(tech?.shortTermOutlook),
+        intermediate: normalizeOutlook(tech?.intermediateTermOutlook),
+        long: normalizeOutlook(tech?.longTermOutlook),
+      },
+      keyTechnicals: {
+        support: numOrNull(raw.instrumentInfo?.keyTechnicals?.support),
+        resistance: numOrNull(raw.instrumentInfo?.keyTechnicals?.resistance),
+        stopLoss: numOrNull(raw.instrumentInfo?.keyTechnicals?.stopLoss),
+      },
+      headlines: (raw.sigDevs ?? [])
+        .map((s) => s.headline)
+        .filter((h): h is string => typeof h === "string" && h.length > 0)
+        .slice(0, 20),
+    };
+  },
+
+  async getEarningsDate(symbol): Promise<Date | null> {
+    type CalendarEvents = {
+      calendarEvents?: { earnings?: { earningsDate?: Date[] } };
+    };
+    const raw = (await yahooFinance
+      .quoteSummary(symbol, { modules: ["calendarEvents"] })
+      .catch(() => null)) as CalendarEvents | null;
+    const dates = raw?.calendarEvents?.earnings?.earningsDate;
+    if (!dates || dates.length === 0) return null;
+    // Yahoo returns up to two dates (range); pick the first (earliest).
+    const d = dates[0];
+    return d instanceof Date ? d : new Date(d);
+  },
 };
+
+function normalizeOutlook(
+  out: { direction?: string; score?: number } | undefined,
+): { direction: "Bullish" | "Bearish" | "Neutral"; score: number | null } | null {
+  if (!out?.direction) return null;
+  const dir =
+    out.direction === "Bullish" || out.direction === "Bearish" || out.direction === "Neutral"
+      ? out.direction
+      : null;
+  if (!dir) return null;
+  return { direction: dir, score: numOrNull(out.score) };
+}
 
 /**
  * Indian counterpart to Yahoo's predefined screens. Yahoo's `region` param
@@ -517,6 +657,27 @@ function normalizeQuote(q: RawQuote): NormalizedQuote {
     currency: strOrNull(q.currency) ?? "USD",
     fetchedAt: new Date(),
   };
+}
+
+/**
+ * 5-year compound annual growth rate from a yearly time series.
+ *
+ *   Takes oldest → newest order. Returns null when there are fewer than two
+ *   usable points or when the start/end are non-positive (CAGR undefined for
+ *   sign flips). Result is in percent (e.g. 14 = 14%/yr).
+ *
+ *   We use whatever span we have — if Yahoo only returned 4 yearly points
+ *   we compute 4-yr CAGR rather than refusing. Better signal than null.
+ */
+function computeYearlyCagr(series: Array<number | null>): number | null {
+  const usable = series.filter((v): v is number => v != null && Number.isFinite(v));
+  if (usable.length < 2) return null;
+  const start = usable[0];
+  const end = usable[usable.length - 1];
+  if (start <= 0 || end <= 0) return null; // CAGR undefined for sign flips
+  const years = usable.length - 1;
+  const cagr = Math.pow(end / start, 1 / years) - 1;
+  return cagr * 100;
 }
 
 function numOrNull(v: unknown): number | null {

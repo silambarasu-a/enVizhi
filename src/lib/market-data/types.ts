@@ -50,7 +50,12 @@ export interface OHLCBar {
   volume: bigint;
 }
 
-export type OHLCRange = "1mo" | "3mo" | "6mo" | "1y" | "5y";
+/**
+ * Chart range. `1d` and `1w` use intraday bars (5m / 30m); the rest use
+ * daily bars. Yahoo gates intraday intervals behind short windows — keep
+ * the period+interval pairs in `RANGE_TO_PERIOD` aligned with that limit.
+ */
+export type OHLCRange = "1d" | "1w" | "1mo" | "3mo" | "6mo" | "1y" | "5y";
 
 /** Search match returned from the upstream universe (Yahoo today). Lighter
  *  than a full Stock row — used by the ⌘K modal so users discover any ticker. */
@@ -68,6 +73,22 @@ export interface SearchMatch {
    *  than a tradeable equity. Index detail pages skip fundamentals + Lynch
    *  and only render price + technicals. */
   isIndex: boolean;
+}
+
+/** Yahoo `insights` payload normalised to what the directional engine
+ *  actually consumes — analyst rating, multi-timeframe outlooks, sig
+ *  developments (news headlines), key technicals. Optional everywhere
+ *  because Yahoo's coverage is sparse outside US large-caps. */
+export interface NormalizedInsights {
+  recommendation: { rating: "BUY" | "HOLD" | "SELL"; targetPrice: number | null } | null;
+  outlooks: {
+    short: { direction: "Bullish" | "Bearish" | "Neutral"; score: number | null } | null;
+    intermediate: { direction: "Bullish" | "Bearish" | "Neutral"; score: number | null } | null;
+    long: { direction: "Bullish" | "Bearish" | "Neutral"; score: number | null } | null;
+  };
+  keyTechnicals: { support: number | null; resistance: number | null; stopLoss: number | null };
+  /** Headlines as plain strings — used for sentiment scoring. */
+  headlines: string[];
 }
 
 /** Hydrated mover entry — symbol, label, and live quote rolled into one shape
@@ -118,4 +139,14 @@ export interface MarketDataProvider {
     region: "US" | "IN",
     count?: number,
   ): Promise<MarketMovers>;
+  /** Analyst recommendation, multi-timeframe technical outlook, recent
+   *  significant developments, and key technicals from Yahoo's insights API.
+   *  Best-effort — coverage is sparse on small caps and Indian stocks.
+   *  Returns null if Yahoo had no insights for the symbol. */
+  getInsights(symbol: string): Promise<NormalizedInsights | null>;
+  /** Next / most recent earnings date for the ticker. Used to flag the
+   *  directional engine when earnings are within ~5 trading days, since
+   *  pre-/post-earnings vol is high and direction is largely unpredictable.
+   *  Returns null if Yahoo doesn't have an earnings date on file. */
+  getEarningsDate(symbol: string): Promise<Date | null>;
 }

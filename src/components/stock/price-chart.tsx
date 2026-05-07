@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import {
   AreaChart,
   Area,
@@ -18,16 +18,19 @@ interface Bar {
   close: number;
 }
 
-const RANGES = ["1mo", "3mo", "6mo", "1y", "5y"] as const;
+const RANGES = ["1d", "1w", "1mo", "3mo", "6mo", "1y", "5y"] as const;
 type Range = (typeof RANGES)[number];
 
 const RANGE_LABEL: Record<Range, string> = {
+  "1d": "1D",
+  "1w": "1W",
   "1mo": "1M",
   "3mo": "3M",
   "6mo": "6M",
   "1y": "1Y",
   "5y": "5Y",
 };
+
 
 // Recharts' callback shape — we only care about the active tooltip index, which
 // it exposes either as `activeTooltipIndex` or sometimes as a string label.
@@ -38,9 +41,16 @@ interface ChartMouseEvent {
 
 export function PriceChart({
   bars,
+  intradayDay,
+  intradayWeek,
   currency,
 }: {
+  /** Daily bars (5y window) — used for 1mo / 3mo / 6mo / 1y / 5y ranges. */
   bars: Bar[];
+  /** Intraday 5m bars for the most recent trading session. */
+  intradayDay?: Bar[];
+  /** Intraday 30m bars for the last 7 calendar days. */
+  intradayWeek?: Bar[];
   currency: string;
 }) {
   const [range, setRange] = useState<Range>("1y");
@@ -50,6 +60,23 @@ export function PriceChart({
   const isDraggingRef = useRef(false);
 
   const filtered = useMemo(() => {
+    // Intraday feeds are already scoped by Yahoo to the requested window
+    // (~last session for 1d, ~last 7d for 1w). Don't re-trim here by a
+    // wall-clock cutoff — that produces a blank chart on Monday morning
+    // because Friday's session is >24h old. Use whatever Yahoo returned.
+    if (range === "1d") {
+      const src = intradayDay ?? [];
+      if (src.length > 0) return src;
+      // Fallback when intraday is unavailable (weekend, holiday, rate
+      // limit): show the last daily bar so the chart isn't blank.
+      return bars.slice(-2);
+    }
+    if (range === "1w") {
+      const src = intradayWeek ?? [];
+      if (src.length > 0) return src;
+      // Fallback to last 5 daily bars when intraday is unavailable.
+      return bars.slice(-5);
+    }
     if (bars.length === 0) return [];
     const now = Date.now();
     const cutoff = (() => {
@@ -64,17 +91,20 @@ export function PriceChart({
           return now - 365 * 24 * 3600 * 1000;
         case "5y":
           return now - 365 * 5 * 24 * 3600 * 1000;
+        default:
+          return 0;
       }
     })();
     return bars.filter((b) => new Date(b.date).getTime() >= cutoff);
-  }, [bars, range]);
+  }, [bars, intradayDay, intradayWeek, range]);
 
   // Reset any active selection when the range changes (indices would be stale).
-  useMemo(() => {
+  // Must be `useEffect` — `setState` during a `useMemo` render would loop /
+  // warn, and was the source of intermittent state-stuck-on-stale bugs.
+  useEffect(() => {
     setSelStart(null);
     setSelEnd(null);
     isDraggingRef.current = false;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range]);
 
   const fmtCcy = useMemo(
@@ -87,15 +117,27 @@ export function PriceChart({
     [currency],
   );
 
-  const fmtDate = useMemo(
-    () =>
-      new Intl.DateTimeFormat("en-US", {
-        month: "short",
-        day: "numeric",
-        year: range === "5y" ? "numeric" : undefined,
-      }),
-    [range],
-  );
+  const fmtDate = useMemo(() => {
+    // Intraday: include time so the axis shows the actual minute granularity.
+    if (range === "1d") {
+      return new Intl.DateTimeFormat(undefined, {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+    if (range === "1w") {
+      return new Intl.DateTimeFormat(undefined, {
+        weekday: "short",
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: range === "5y" ? "numeric" : undefined,
+    });
+  }, [range]);
 
   const isUp =
     filtered.length >= 2 &&
@@ -124,6 +166,27 @@ export function PriceChart({
       isUp: absChange >= 0,
     };
   }, [selStart, selEnd, filtered]);
+
+  // Period summary: full first-bar → last-bar return for the active range.
+  // Shown whenever no manual selection is active, so the user always sees
+  // the period's headline number without having to drag.
+  const periodSummary = useMemo(() => {
+    if (filtered.length < 2) return null;
+    const startBar = filtered[0]!;
+    const endBar = filtered[filtered.length - 1]!;
+    if (startBar.close <= 0) return null;
+    const absChange = endBar.close - startBar.close;
+    const pctChange = (absChange / startBar.close) * 100;
+    return {
+      startDate: startBar.date,
+      endDate: endBar.date,
+      startPrice: startBar.close,
+      endPrice: endBar.close,
+      absChange,
+      pctChange,
+      isUp: absChange >= 0,
+    };
+  }, [filtered]);
 
   function indexFromEvent(e: ChartMouseEvent | null): number | null {
     if (!e) return null;
@@ -251,9 +314,51 @@ export function PriceChart({
             </button>
           </div>
         </div>
-      ) : filtered.length > 1 ? (
-        <p className="mx-5 mt-3 text-[11px] text-muted-foreground">
-          Tip: click and drag across the chart to measure return between two dates.
+      ) : periodSummary ? (
+        <div
+          className={`mx-5 mt-4 rounded-lg border px-4 py-2.5 flex items-center justify-between gap-3 text-xs ${
+            periodSummary.isUp
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-rose-500/30 bg-rose-500/5"
+          }`}
+        >
+          <div className="flex items-center gap-3 min-w-0 flex-wrap">
+            <span className="font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+              {RANGE_LABEL[range]} return
+            </span>
+            <span className="text-muted-foreground hidden sm:inline">·</span>
+            <span className="font-mono tabular-nums text-muted-foreground">
+              {fmtCcy.format(periodSummary.startPrice)} →{" "}
+              {fmtCcy.format(periodSummary.endPrice)}
+            </span>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span
+              className={`font-mono tabular-nums font-medium ${
+                periodSummary.isUp
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              {periodSummary.isUp ? "+" : ""}
+              {periodSummary.pctChange.toFixed(2)}%
+            </span>
+            <span
+              className={`font-mono tabular-nums text-[11px] hidden md:inline ${
+                periodSummary.isUp
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-rose-600 dark:text-rose-400"
+              }`}
+            >
+              ({periodSummary.isUp ? "+" : ""}
+              {fmtCcy.format(periodSummary.absChange)})
+            </span>
+          </div>
+        </div>
+      ) : null}
+      {!selection && filtered.length > 1 ? (
+        <p className="mx-5 mt-2 text-[11px] text-muted-foreground/70">
+          Tip: click and drag across the chart to measure return between any two dates.
         </p>
       ) : null}
 

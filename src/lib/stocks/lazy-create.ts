@@ -159,6 +159,98 @@ function defaultCurrencyForExchange(ex: Exchange): string {
 }
 
 /**
+ * Re-fetch fundamentals from Yahoo and persist any improvement.
+ *
+ *   `findOrCreateStock` only fetches fundamentals once at row-create time —
+ *   if Yahoo returned nulls then (common for Indian small caps and stocks
+ *   right after IPO), the row is permanently sparse. This function refreshes
+ *   the row when it's STALE (synced > maxAgeMs) or SPARSE (a critical field
+ *   like epsGrowth5y or sector is null), and merges any newly-available
+ *   values without overwriting existing data with nulls.
+ *
+ *   Returns the (possibly updated) fundamentals row, or null if the row
+ *   doesn't exist or refresh failed.
+ */
+const STALE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const CRITICAL_FIELDS = [
+  "epsGrowth5y",
+  "marketCap",
+  "pe",
+] as const;
+
+export async function refreshFundamentalsIfStale(
+  stockId: string,
+  symbol: string,
+): Promise<NonNullable<Awaited<ReturnType<typeof prisma.stockFundamentals.findUnique>>> | null> {
+  const existing = await prisma.stockFundamentals.findUnique({ where: { stockId } });
+  if (!existing) return null;
+
+  const ageMs = Date.now() - new Date(existing.syncedAt).getTime();
+  const isStale = ageMs > STALE_AGE_MS;
+  const isSparse = CRITICAL_FIELDS.some((f) => existing[f] == null);
+  if (!isStale && !isSparse) return existing;
+
+  const stock = await prisma.stock.findUnique({ where: { id: stockId }, select: { currency: true } });
+  if (!stock) return existing;
+
+  const fresh = await provider.getFundamentals(symbol).catch(() => null);
+  if (!fresh) return existing;
+
+  const modPeg = modifiedPEG(fresh.pe ?? existing.pe, fresh.epsGrowth5y ?? existing.epsGrowth5y, fresh.dividendYield ?? existing.dividendYield);
+  const fp = fairPE(fresh.epsGrowth5y ?? existing.epsGrowth5y);
+  const lynchCat = classifyLynch({
+    marketCap: fresh.marketCap ?? existing.marketCap,
+    currency: fresh.currency ?? stock.currency,
+    epsGrowth5yPct: fresh.epsGrowth5y ?? existing.epsGrowth5y,
+    dividendYieldPct: fresh.dividendYield ?? existing.dividendYield,
+    priceToBook: fresh.priceToBook ?? existing.priceToBook,
+    sector: fresh.sector,
+  });
+
+  // Merge — never overwrite a non-null existing value with a fresh null.
+  const merge = <K extends keyof typeof existing>(field: K, freshVal: (typeof existing)[K] | null) =>
+    freshVal != null ? freshVal : existing[field];
+
+  const updated = await prisma.stockFundamentals.update({
+    where: { stockId },
+    data: {
+      pe: merge("pe", fresh.pe),
+      peg: merge("peg", fresh.peg),
+      modifiedPeg: modPeg ?? existing.modifiedPeg,
+      fairPe: fp ?? existing.fairPe,
+      lynchCategory: lynchCat ?? existing.lynchCategory,
+      marketCap: merge("marketCap", fresh.marketCap),
+      eps: merge("eps", fresh.eps),
+      epsGrowth5y: merge("epsGrowth5y", fresh.epsGrowth5y),
+      revenueGrowth5y: merge("revenueGrowth5y", fresh.revenueGrowth5y),
+      dividendYield: merge("dividendYield", fresh.dividendYield),
+      debtToEquity: merge("debtToEquity", fresh.debtToEquity),
+      roe: merge("roe", fresh.roe),
+      profitMargin: merge("profitMargin", fresh.profitMargin),
+      beta: merge("beta", fresh.beta),
+      priceToBook: merge("priceToBook", fresh.priceToBook),
+      syncedAt: fresh.syncedAt,
+      dataQualityFlags: fresh.dataQualityFlags,
+    },
+  });
+
+  // Backfill sector / industry on the Stock row when Yahoo finally has them.
+  if (fresh.sector || fresh.industry) {
+    await prisma.stock
+      .update({
+        where: { id: stockId },
+        data: {
+          sector: fresh.sector ?? undefined,
+          industry: fresh.industry ?? undefined,
+        },
+      })
+      .catch(() => {});
+  }
+
+  return updated;
+}
+
+/**
  * Best-guess currency for known market-index symbols. Returns null when the
  * symbol isn't on the list — caller falls back to a live quote fetch.
  *

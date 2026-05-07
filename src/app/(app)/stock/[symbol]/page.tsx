@@ -4,13 +4,17 @@ import { ArrowLeft, TrendingUp, TrendingDown, Bell } from "lucide-react";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { provider } from "@/lib/market-data/router";
-import { findOrCreateStock } from "@/lib/stocks/lazy-create";
+import { findOrCreateStock, refreshFundamentalsIfStale } from "@/lib/stocks/lazy-create";
 import { modifiedPEG, fairPE, lynchFairValue } from "@/lib/lynch/score";
 import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT } from "@/lib/alerts/evaluator";
 import { LynchCard } from "@/components/stock/lynch-card";
 import { FundamentalsGrid } from "@/components/stock/fundamentals-grid";
 import { PriceChart } from "@/components/stock/price-chart";
 import { Scoreboard, IndexScoreboard } from "@/components/stock/scoreboard";
+import { ForecastCard } from "@/components/stock/forecast-card";
+import { DirectionalCard } from "@/components/stock/directional-card";
+import { buildForecastCone } from "@/lib/forecast/cone";
+import { buildDirectionalRead } from "@/lib/forecast/directional";
 import { AddToWatchlist } from "@/components/watchlists/add-to-watchlist";
 import { CreateAlertForm } from "@/components/alerts/create-alert-form";
 import { AlertRow } from "@/components/alerts/alert-row";
@@ -39,12 +43,27 @@ export default async function StockDetailPage({
   const stock = await findOrCreateStock(symbol);
   if (!stock) notFound();
 
-  const f = stock.fundamentals;
   const isIndex = stock.exchange === "INDEX";
 
-  const [quote, ohlc, watchlists, alerts] = await Promise.all([
+  // Pull these out once so TypeScript can narrow stock.fundamentals later.
+  const stockFundamentals = stock.fundamentals;
+
+  const [quote, ohlc, ohlcDay, ohlcWeek, insights, earningsDate, refreshedFundamentals, watchlists, alerts] = await Promise.all([
     provider.getQuote(symbol).catch(() => null),
     provider.getOHLC(symbol, "5y").catch(() => []),
+    // Intraday for the 1D / 1W chart ranges. Cheap (≈80 bars each) and lazy-
+    // loading them client-side would mean an awkward loading state inside the
+    // chart. Failures fall back to empty arrays.
+    provider.getOHLC(symbol, "1d").catch(() => []),
+    provider.getOHLC(symbol, "1w").catch(() => []),
+    // Yahoo insights + earnings — best-effort, both can be null.
+    provider.getInsights(symbol).catch(() => null),
+    provider.getEarningsDate(symbol).catch(() => null),
+    // Refresh fundamentals if the row is sparse (key fields null) or stale
+    // (synced > 7 days). Yahoo's coverage improves over time for newly-IPO'd
+    // and Indian small-cap stocks; this keeps the Lynch / scoreboard cards
+    // useful as data gets filled in.
+    isIndex ? Promise.resolve(null) : refreshFundamentalsIfStale(stock.id, symbol).catch(() => null),
     prisma.watchlist.findMany({
       where: { userId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
@@ -91,6 +110,10 @@ export default async function StockDetailPage({
       });
   }
 
+  // Prefer freshly-refreshed fundamentals when present — they have any new
+  // fields Yahoo just made available since the row was first created.
+  const f = refreshedFundamentals ?? stockFundamentals;
+
   const modPeg = f ? modifiedPEG(f.pe, f.epsGrowth5y, f.dividendYield) : null;
   const fp = f ? fairPE(f.epsGrowth5y) : null;
   const fairVal = f ? lynchFairValue(f.eps, f.epsGrowth5y) : null;
@@ -106,6 +129,24 @@ export default async function StockDetailPage({
   const bars = (ohlc ?? []).map((b) => ({
     date: b.date.toISOString(),
     close: b.close,
+  }));
+  const intradayDay = (ohlcDay ?? []).map((b) => ({
+    date: b.date.toISOString(),
+    close: b.close,
+  }));
+  const intradayWeek = (ohlcWeek ?? []).map((b) => ({
+    date: b.date.toISOString(),
+    close: b.close,
+  }));
+  // Full OHLCV bars for the directional engine — needs high/low/volume for
+  // ATR, ADX, OBV, Stochastic, CMF, candlestick patterns.
+  const richBars = (ohlc ?? []).map((b) => ({
+    date: b.date.toISOString(),
+    open: b.open,
+    high: b.high,
+    low: b.low,
+    close: b.close,
+    volume: Number(b.volume),
   }));
 
   // ─── Score board ────────────────────────────────────────────────────
@@ -129,6 +170,17 @@ export default async function StockDetailPage({
     fundamentals: fundamentalsScore,
     technical: technicalScore,
     lynch: lynchScoreResult,
+  });
+  // Probabilistic forecast cone — works for stocks and indices alike since
+  // GBM only needs a closes series. Only requires non-empty bars.
+  const forecastCone = buildForecastCone(bars);
+  // Directional read — multi-signal vote on which way evidence currently
+  // leans, plus typical magnitude IF the move happens. Uses full OHLCV bars +
+  // Yahoo insights + earnings date for the richest possible read.
+  const directionalRead = buildDirectionalRead({
+    bars: richBars,
+    insights,
+    earningsDate,
   });
 
   const watchlistOpts = watchlists.map((w) => ({
@@ -215,12 +267,22 @@ export default async function StockDetailPage({
       {/* ── Chart + Lynch ── */}
       {isIndex ? (
         <div>
-          <PriceChart bars={bars} currency={currency} />
+          <PriceChart
+            bars={bars}
+            intradayDay={intradayDay}
+            intradayWeek={intradayWeek}
+            currency={currency}
+          />
         </div>
       ) : (
         <div className="grid gap-6 lg:grid-cols-3">
           <div className="lg:col-span-2">
-            <PriceChart bars={bars} currency={currency} />
+            <PriceChart
+              bars={bars}
+              intradayDay={intradayDay}
+              intradayWeek={intradayWeek}
+              currency={currency}
+            />
           </div>
           <LynchCard
             category={f?.lynchCategory ?? null}
@@ -232,6 +294,12 @@ export default async function StockDetailPage({
           />
         </div>
       )}
+
+      {/* ── Directional read (best-guess direction + magnitude) ── */}
+      <DirectionalCard read={directionalRead} currency={currency} />
+
+      {/* ── Forecast cone (probability ranges) ── */}
+      <ForecastCard cone={forecastCone} currency={currency} />
 
       {/* ── Fundamentals ── */}
       {!isIndex ? <FundamentalsGrid fundamentals={f} currency={currency} /> : null}

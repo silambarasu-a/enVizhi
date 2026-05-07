@@ -85,9 +85,16 @@ export function LynchCard({
           {categoryDescription(category)}
         </p>
       ) : (
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          Not enough data to classify. Likely missing growth or sector from the upstream feed.
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground leading-relaxed">
+            Yahoo Finance doesn&apos;t surface enough metrics for this ticker — typically EPS
+            growth, sector, or market cap is null.
+          </p>
+          <p className="text-xs text-muted-foreground/70 leading-relaxed">
+            Common for Indian small-caps and recent IPOs. We re-fetch fundamentals every visit, so
+            classification will appear automatically once Yahoo&apos;s coverage improves.
+          </p>
+        </div>
       )}
 
       <div className="grid grid-cols-2 gap-3 pt-2">
