@@ -10,10 +10,15 @@ import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT } from "@/lib/alerts/evaluator";
 import { LynchCard } from "@/components/stock/lynch-card";
 import { FundamentalsGrid } from "@/components/stock/fundamentals-grid";
 import { PriceChart } from "@/components/stock/price-chart";
+import { Scoreboard } from "@/components/stock/scoreboard";
 import { AddToWatchlist } from "@/components/watchlists/add-to-watchlist";
 import { CreateAlertForm } from "@/components/alerts/create-alert-form";
 import { AlertRow } from "@/components/alerts/alert-row";
 import { LocalTime } from "@/components/util/local-time";
+import { scoreFundamentals } from "@/lib/scoring/fundamentals";
+import { scoreTechnical } from "@/lib/scoring/technical";
+import { scoreLynch } from "@/lib/scoring/lynch";
+import { combineScores } from "@/lib/scoring/overall";
 
 export const dynamic = "force-dynamic";
 
@@ -85,6 +90,29 @@ export default async function StockDetailPage({
     close: b.close,
   }));
 
+  // ─── Score board ────────────────────────────────────────────────────
+  // Pure computations: fundamentals from the StockFundamentals row,
+  // technical from the 5y bars, Lynch from price + computed fair value.
+  const fundamentalsScore = scoreFundamentals({
+    pe: f?.pe ?? null,
+    peg: f?.peg ?? null,
+    priceToBook: f?.priceToBook ?? null,
+    dividendYield: f?.dividendYield ?? null,
+    epsGrowth5y: f?.epsGrowth5y ?? null,
+    revenueGrowth5y: f?.revenueGrowth5y ?? null,
+    roe: f?.roe ?? null,
+    profitMargin: f?.profitMargin ?? null,
+    debtToEquity: f?.debtToEquity ?? null,
+    beta: f?.beta ?? null,
+  });
+  const technicalScore = scoreTechnical(bars);
+  const lynchScoreResult = scoreLynch({ price, fairValue: fairVal });
+  const overallScore = combineScores({
+    fundamentals: fundamentalsScore,
+    technical: technicalScore,
+    lynch: lynchScoreResult,
+  });
+
   const watchlistOpts = watchlists.map((w) => ({
     id: w.id,
     name: w.name,
@@ -152,6 +180,15 @@ export default async function StockDetailPage({
           <AddToWatchlist symbol={symbol} watchlists={watchlistOpts} />
         </div>
       </header>
+
+      {/* ── Score board ── */}
+      <Scoreboard
+        fundamentals={fundamentalsScore}
+        technical={technicalScore}
+        lynch={lynchScoreResult}
+        overall={overallScore}
+        currency={currency}
+      />
 
       {/* ── Chart + Lynch ── */}
       <div className="grid gap-6 lg:grid-cols-3">
