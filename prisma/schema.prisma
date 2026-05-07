@@ -113,6 +113,10 @@ enum Exchange {
   NYSE
   NSE
   BSE
+  // Catch-all for market indices (^NSEI, ^GSPC, ^BSESN, ^DJI, ^IXIC, …).
+  // Index Stock rows skip the fundamentals fetch and the screener excludes
+  // them — they exist purely to back the /stock/[symbol] detail page.
+  INDEX
 }
 
 enum LynchCategory {

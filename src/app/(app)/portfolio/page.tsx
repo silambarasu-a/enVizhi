@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { computePositions } from "@/lib/portfolio/positions";
 import { CreatePortfolioForm } from "@/components/portfolio/create-portfolio-form";
+import { benchmarkLabel } from "@/lib/benchmarks";
 
 export const dynamic = "force-dynamic";
 
@@ -98,7 +99,7 @@ export default async function PortfolioListPage() {
                     <div className="font-mono text-[11px] text-muted-foreground mt-1 flex items-center gap-2">
                       <span>{s.baseCurrency}</span>
                       <span>·</span>
-                      <span>vs {s.benchmark === "^GSPC" ? "S&P 500" : "NIFTY 50"}</span>
+                      <span>vs {benchmarkLabel(s.benchmark)}</span>
                     </div>
                   </div>
                   <ArrowRight className="size-4 text-muted-foreground group-hover:text-foreground transition-colors" />

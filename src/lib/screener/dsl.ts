@@ -175,7 +175,10 @@ const FIELD_TO_COLUMN: Record<NumericFieldId, string> = {
  * numeric range is set; otherwise they remain visible (with "—" cells).
  */
 export function buildStockWhere(filter: ScreenerFilter): Prisma.StockWhereInput {
-  const where: Prisma.StockWhereInput = { isActive: true };
+  // Indices live in the same Stock table as equities (so /stock/[symbol]
+  // works for both), but they have no fundamentals and don't belong in the
+  // screener's filterable universe.
+  const where: Prisma.StockWhereInput = { isActive: true, exchange: { not: "INDEX" } };
 
   if (filter.exchanges.length) {
     where.exchange = { in: filter.exchanges as ExchangeId[] };

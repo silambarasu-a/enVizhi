@@ -57,13 +57,17 @@ export type OHLCRange = "1mo" | "3mo" | "6mo" | "1y" | "5y";
 export interface SearchMatch {
   symbol: string;
   name: string;
-  /** Pretty exchange label: NASDAQ, NYSE, NSE, BSE, AMEX, LSE, TSX, etc. */
+  /** Pretty exchange label: NASDAQ, NYSE, NSE, BSE, INDEX, AMEX, LSE, TSX, etc. */
   exchange: string;
   /** ISO currency or null if Yahoo didn't tell us. */
   currency: string | null;
   /** True when this exchange maps to one of our supported `Exchange` enum
    *  values — lets the stock-detail page lazy-create a Stock row safely. */
   isSupported: boolean;
+  /** True when this is a market index (^NSEI, ^GSPC, ^BSESN, etc.) rather
+   *  than a tradeable equity. Index detail pages skip fundamentals + Lynch
+   *  and only render price + technicals. */
+  isIndex: boolean;
 }
 
 /** Hydrated mover entry — symbol, label, and live quote rolled into one shape

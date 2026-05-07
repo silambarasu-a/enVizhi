@@ -10,7 +10,7 @@ import { ALERT_TYPE_LABEL, ALERT_TYPE_UNIT } from "@/lib/alerts/evaluator";
 import { LynchCard } from "@/components/stock/lynch-card";
 import { FundamentalsGrid } from "@/components/stock/fundamentals-grid";
 import { PriceChart } from "@/components/stock/price-chart";
-import { Scoreboard } from "@/components/stock/scoreboard";
+import { Scoreboard, IndexScoreboard } from "@/components/stock/scoreboard";
 import { AddToWatchlist } from "@/components/watchlists/add-to-watchlist";
 import { CreateAlertForm } from "@/components/alerts/create-alert-form";
 import { AlertRow } from "@/components/alerts/alert-row";
@@ -41,6 +41,7 @@ export default async function StockDetailPage({
 
   const f = stock.fundamentals;
   const currency = stock.currency;
+  const isIndex = stock.exchange === "INDEX";
 
   const [quote, ohlc, watchlists, alerts] = await Promise.all([
     provider.getQuote(symbol).catch(() => null),
@@ -182,31 +183,41 @@ export default async function StockDetailPage({
       </header>
 
       {/* ── Score board ── */}
-      <Scoreboard
-        fundamentals={fundamentalsScore}
-        technical={technicalScore}
-        lynch={lynchScoreResult}
-        overall={overallScore}
-        currency={currency}
-      />
-
-      {/* ── Chart + Lynch ── */}
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <PriceChart bars={bars} currency={currency} />
-        </div>
-        <LynchCard
-          category={f?.lynchCategory ?? null}
-          modifiedPeg={modPeg}
-          fairPe={fp}
-          fairValue={fairVal}
-          price={price}
+      {isIndex ? (
+        <IndexScoreboard technical={technicalScore} currency={currency} />
+      ) : (
+        <Scoreboard
+          fundamentals={fundamentalsScore}
+          technical={technicalScore}
+          lynch={lynchScoreResult}
+          overall={overallScore}
           currency={currency}
         />
-      </div>
+      )}
+
+      {/* ── Chart + Lynch ── */}
+      {isIndex ? (
+        <div>
+          <PriceChart bars={bars} currency={currency} />
+        </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-3">
+          <div className="lg:col-span-2">
+            <PriceChart bars={bars} currency={currency} />
+          </div>
+          <LynchCard
+            category={f?.lynchCategory ?? null}
+            modifiedPeg={modPeg}
+            fairPe={fp}
+            fairValue={fairVal}
+            price={price}
+            currency={currency}
+          />
+        </div>
+      )}
 
       {/* ── Fundamentals ── */}
-      <FundamentalsGrid fundamentals={f} currency={currency} />
+      {!isIndex ? <FundamentalsGrid fundamentals={f} currency={currency} /> : null}
 
       {/* ── Alerts ── */}
       <section className="rounded-2xl border border-border bg-card shadow-card overflow-hidden">
@@ -235,13 +246,13 @@ export default async function StockDetailPage({
         ) : (
           <div className="px-6 pb-6 -mt-1 flex items-center gap-2 text-xs text-muted-foreground">
             <Bell className="size-3.5" />
-            No alerts set on this stock yet.
+            No alerts set on this {isIndex ? "index" : "stock"} yet.
           </div>
         )}
       </section>
 
-      {/* ── Data quality ── */}
-      {gapCount > 0 ? (
+      {/* ── Data quality (stocks only) ── */}
+      {!isIndex && gapCount > 0 ? (
         <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4 text-sm">
           <div className="font-medium text-amber-900 dark:text-amber-200">
             Data quality: {gapCount} field{gapCount === 1 ? "" : "s"} missing from upstream
@@ -253,10 +264,15 @@ export default async function StockDetailPage({
         </div>
       ) : null}
 
-      {f?.syncedAt ? (
+      {!isIndex && f?.syncedAt ? (
         <p className="text-[11px] text-muted-foreground/70 text-center">
           Fundamentals synced{" "}
           <LocalTime iso={f.syncedAt.toISOString()} mode="datetime" /> · Quotes delayed 15 min
+        </p>
+      ) : null}
+      {isIndex ? (
+        <p className="text-[11px] text-muted-foreground/70 text-center">
+          Quotes delayed 15 min · Index data from Yahoo Finance
         </p>
       ) : null}
     </div>

@@ -37,6 +37,22 @@ export async function findOrCreateStock(symbolRaw: string) {
   const exchange = exchangeFromLabel(match.exchange);
   if (!exchange) return null;
 
+  // Indices skip the fundamentals fetch entirely — Yahoo's quoteSummary returns
+  // mostly nulls for ^NSEI / ^GSPC etc., and the metrics that exist (P/E of the
+  // underlying basket) don't compose with our equity-oriented score model.
+  if (match.isIndex) {
+    return prisma.stock.create({
+      data: {
+        symbol,
+        name: match.name,
+        exchange, // "INDEX"
+        currency: match.currency ?? "USD",
+        sector: null,
+      },
+      include: { fundamentals: true },
+    });
+  }
+
   // Fetch fundamentals in parallel with the row create — since the row is the
   // FK target for fundamentals we need create first, but we kick off the
   // upstream fetch concurrently to mask Yahoo latency.
@@ -121,6 +137,8 @@ function exchangeFromLabel(label: string): Exchange | null {
       return "NSE";
     case "BSE":
       return "BSE";
+    case "INDEX":
+      return "INDEX";
     default:
       return null;
   }

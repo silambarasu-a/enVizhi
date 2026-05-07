@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import type { TransactionType } from "@/generated/prisma/enums";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { BENCHMARK_SYMBOLS } from "@/lib/benchmarks";
+import { findOrCreateStock } from "@/lib/stocks/lazy-create";
 
 async function requireUserId(): Promise<string> {
   const session = await auth();
@@ -20,7 +22,7 @@ export async function createPortfolio(formData: FormData) {
 
   if (!name || name.length > 64) return { error: "Name required (max 64 chars)" };
   if (!["USD", "INR"].includes(baseCurrency)) return { error: "Currency must be USD or INR" };
-  if (!["^GSPC", "^NSEI"].includes(benchmark)) return { error: "Pick S&P 500 or NIFTY 50" };
+  if (!BENCHMARK_SYMBOLS.has(benchmark)) return { error: "Unknown benchmark" };
 
   const portfolio = await prisma.portfolio.create({
     data: { userId, name, baseCurrency, benchmark },
@@ -65,11 +67,35 @@ export async function addTransaction(formData: FormData) {
   });
   if (!portfolio) return { error: "Portfolio not found" };
 
-  const stock = await prisma.stock.findUnique({
+  // Try the local universe first, lazy-create from Yahoo if unknown.
+  // findOrCreateStock returns null only when Yahoo doesn't recognise the
+  // symbol or it's on an unsupported exchange.
+  let stock = await prisma.stock.findUnique({
     where: { symbol },
-    select: { id: true, currency: true },
+    select: { id: true, currency: true, exchange: true },
   });
-  if (!stock) return { error: `Symbol ${symbol} not in universe (try the screener for tickers)` };
+  if (!stock) {
+    const created = await findOrCreateStock(symbol).catch(() => null);
+    if (!created) {
+      return {
+        error: `Symbol ${symbol} not found on Yahoo Finance, or it's listed on an unsupported exchange.`,
+      };
+    }
+    stock = { id: created.id, currency: created.currency, exchange: created.exchange };
+  }
+
+  // Block transactions on indices — they aren't tradeable instruments.
+  if (stock.exchange === "INDEX") {
+    return { error: `${symbol} is an index, not a tradeable security.` };
+  }
+
+  // Whole-share rule for Indian stocks. Fractional shares are a US-only
+  // brokerage convenience; NSE / BSE round lot is 1 share.
+  if (stock.currency === "INR" && !Number.isInteger(quantity)) {
+    return {
+      error: "Indian stocks (NSE/BSE) must be whole shares — fractional quantities aren't supported.",
+    };
+  }
 
   await prisma.transaction.create({
     data: {

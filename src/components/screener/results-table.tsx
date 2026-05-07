@@ -35,6 +35,7 @@ import {
   filterToSearchParams,
 } from "@/lib/screener/dsl";
 import { NUMERIC_FIELD_IDS, type SortableField } from "@/lib/screener/fields";
+import { formatMarketCap as formatMarketCapShared } from "@/lib/format";
 
 /**
  * URL keys that the filter system owns. When pagination / sort rewrites the
@@ -351,14 +352,5 @@ function formatMarketCap(cap: string | null | undefined, currency: string) {
   if (cap == null) return <span className="text-muted-foreground/40">—</span>;
   const n = Number(cap);
   if (!Number.isFinite(n)) return <span className="text-muted-foreground/40">—</span>;
-  if (currency === "INR") {
-    // Show in Lakh Crore (10^12) for INR
-    const lcr = n / 1e12;
-    return `₹${lcr.toFixed(1)} L Cr`;
-  }
-  // USD: B/T
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
-  return `$${n.toLocaleString()}`;
+  return formatMarketCapShared(n, currency);
 }

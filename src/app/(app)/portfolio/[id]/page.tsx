@@ -106,12 +106,6 @@ export default async function PortfolioDetailPage({
       pct: totalForSlices > 0 ? ((h.marketValue ?? 0) / totalForSlices) * 100 : 0,
     }));
 
-  // For the create-transaction form: full active stock list for autocomplete.
-  const allStocks = await prisma.stock.findMany({
-    where: { isActive: true },
-    select: { symbol: true, name: true },
-    orderBy: { symbol: "asc" },
-  });
 
   const txnRows = portfolio.transactions.map((t) => ({
     id: t.id,
@@ -203,7 +197,7 @@ export default async function PortfolioDetailPage({
           <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground mb-4">
             Add transaction
           </div>
-          <AddTransactionForm portfolioId={portfolio.id} stocks={allStocks} />
+          <AddTransactionForm portfolioId={portfolio.id} />
         </div>
       </section>
 

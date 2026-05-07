@@ -1,4 +1,4 @@
-import { ChevronDown, Activity, BarChart3, Target, Gauge } from "lucide-react";
+import { ChevronDown, Activity, BarChart3, Target, Gauge, Info } from "lucide-react";
 import type { Score } from "@/lib/scoring/types";
 import {
   BIAS_LABEL,
@@ -436,4 +436,66 @@ function signalStyle(signal: Signal | null): {
         icon: "text-muted-foreground",
       };
   }
+}
+
+// ─── Index scoreboard (technical-only) ──────────────────────────────────
+
+/**
+ * Slimmed-down scoreboard for market indices (^NSEI, ^GSPC, ^BSESN, …).
+ *
+ *   Indices have no per-share earnings, no growth rate, no book value — so
+ *   the Fundamentals and Lynch pillars don't apply. We render only the
+ *   Technical card plus a small explainer so users aren't confused why the
+ *   full scoreboard is missing.
+ */
+export function IndexScoreboard({
+  technical,
+  currency,
+}: {
+  technical: TechnicalScore;
+  currency: string;
+}) {
+  const fmt = new Intl.NumberFormat(currency === "INR" ? "en-IN" : "en-US", {
+    style: "currency",
+    currency,
+    currencyDisplay: "narrowSymbol",
+    maximumFractionDigits: 2,
+  });
+
+  return (
+    <section className="space-y-4">
+      <div className="flex items-baseline justify-between gap-3">
+        <div>
+          <h3 className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
+            Technical read
+          </h3>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Index-level signals — fundamentals and Lynch valuation don't apply
+          </p>
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 italic">Not investment advice</p>
+      </div>
+
+      <div className="rounded-2xl border border-border bg-card p-5 shadow-card flex items-start gap-3 text-sm">
+        <Info className="size-4 text-muted-foreground shrink-0 mt-0.5" />
+        <p className="text-muted-foreground leading-relaxed">
+          Indices aggregate many companies, so per-share metrics like P/E, EPS growth, and Lynch
+          fair value don't have a clean meaning. Only price-based technicals are surfaced below.
+        </p>
+      </div>
+
+      <ScoreCard
+        icon={Activity}
+        title="Technical"
+        score={technical}
+        renderHeader={() => (
+          <div className="space-y-1">
+            <ScoreHead value={technical.value} headline={technical.headline} />
+            {technical.bias ? <BiasPill bias={technical.bias} /> : null}
+          </div>
+        )}
+        extra={<TechnicalSnapshot snapshot={technical.snapshot} fmt={fmt} />}
+      />
+    </section>
+  );
 }

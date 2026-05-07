@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Plus } from "lucide-react";
 import { createPortfolio } from "@/app/(app)/portfolio/actions";
+import { groupedBenchmarks } from "@/lib/benchmarks";
 
 export function CreatePortfolioForm() {
   const [error, setError] = useState<string | null>(null);
@@ -56,8 +57,15 @@ export function CreatePortfolioForm() {
             defaultValue="^GSPC"
             className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <option value="^GSPC">S&P 500</option>
-            <option value="^NSEI">NIFTY 50</option>
+            {groupedBenchmarks().map((g) => (
+              <optgroup key={g.region} label={g.region}>
+                {g.items.map((b) => (
+                  <option key={b.symbol} value={b.symbol}>
+                    {b.label}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
           </select>
         </label>
 

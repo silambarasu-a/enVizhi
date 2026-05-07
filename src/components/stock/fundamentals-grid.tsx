@@ -1,3 +1,5 @@
+import { formatMarketCap as formatMarketCapShared } from "@/lib/format";
+
 interface FundamentalsInput {
   pe: number | null;
   peg: number | null;
@@ -124,13 +126,5 @@ function formatMarketCap(cap: bigint | null, currency: string) {
   if (cap == null) return "—";
   const n = Number(cap);
   if (!Number.isFinite(n)) return "—";
-  if (currency === "INR") {
-    const lcr = n / 1e12;
-    if (lcr >= 1) return `₹${lcr.toFixed(2)} L Cr`;
-    return `₹${(n / 1e7).toFixed(0)} Cr`;
-  }
-  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
-  if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
-  if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
-  return `$${n.toLocaleString()}`;
+  return formatMarketCapShared(n, currency);
 }

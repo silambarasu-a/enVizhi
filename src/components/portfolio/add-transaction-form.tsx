@@ -5,22 +5,19 @@ import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import type { TransactionType } from "@/generated/prisma/enums";
 import { addTransaction } from "@/app/(app)/portfolio/actions";
-
-interface StockOption {
-  symbol: string;
-  name: string;
-}
+import { TickerSelect } from "./ticker-select";
 
 export function AddTransactionForm({
   portfolioId,
-  stocks,
 }: {
   portfolioId: string;
-  stocks: StockOption[];
 }) {
   const router = useRouter();
   const [type, setType] = useState<TransactionType>("BUY");
   const [symbol, setSymbol] = useState("");
+  /** Currency of the picked symbol — null until user picks from the dropdown.
+   *  Drives the whole-share rule: INR symbols can't have fractional quantity. */
+  const [pickedCurrency, setPickedCurrency] = useState<string | null>(null);
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [fees, setFees] = useState("0");
@@ -29,9 +26,22 @@ export function AddTransactionForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const wholeSharesOnly = pickedCurrency === "INR";
+
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+
+    // Client-side guard so INR users get instant feedback before hitting the
+    // server. The action enforces the same rule authoritatively.
+    if (wholeSharesOnly) {
+      const q = Number(quantity);
+      if (!Number.isInteger(q)) {
+        setError("Indian stocks (NSE/BSE) must be whole shares — fractional quantities aren't supported.");
+        return;
+      }
+    }
+
     const fd = new FormData(e.currentTarget);
     startTransition(async () => {
       const res = await addTransaction(fd);
@@ -41,6 +51,7 @@ export function AddTransactionForm({
       }
       // Reset and refresh.
       setSymbol("");
+      setPickedCurrency(null);
       setQuantity("");
       setPrice("");
       setFees("0");
@@ -53,7 +64,7 @@ export function AddTransactionForm({
     <form onSubmit={onSubmit} className="space-y-3">
       <input type="hidden" name="portfolioId" value={portfolioId} />
 
-      <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-7 gap-3">
         <Field label="Type">
           <select
             name="type"
@@ -66,31 +77,28 @@ export function AddTransactionForm({
           </select>
         </Field>
 
-        <Field label="Symbol" className="col-span-2 sm:col-span-1">
-          <input
-            type="text"
-            name="symbol"
-            list="symbol-list"
-            required
+        <Field label="Symbol" className="col-span-2 sm:col-span-2">
+          <TickerSelect
             value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            placeholder="AAPL"
-            className="w-full h-10 rounded-lg border border-input bg-background px-3 text-sm font-mono uppercase placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            onChange={(sym, currency) => {
+              setSymbol(sym);
+              setPickedCurrency(currency);
+            }}
           />
-          <datalist id="symbol-list">
-            {stocks.map((s) => (
-              <option key={s.symbol} value={s.symbol}>
-                {s.name}
-              </option>
-            ))}
-          </datalist>
+          {/* Hidden input ferries the picked symbol via FormData. */}
+          <input type="hidden" name="symbol" value={symbol} />
+          {wholeSharesOnly ? (
+            <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-400">
+              India: whole shares only (NSE/BSE).
+            </p>
+          ) : null}
         </Field>
 
-        <Field label="Quantity">
+        <Field label={wholeSharesOnly ? "Quantity (whole shares)" : "Quantity"}>
           <input
             type="number"
             name="quantity"
-            step="any"
+            step={wholeSharesOnly ? "1" : "any"}
             min={0}
             required
             value={quantity}

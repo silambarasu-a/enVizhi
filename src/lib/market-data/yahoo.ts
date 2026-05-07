@@ -253,8 +253,22 @@ export const yahooProvider: MarketDataProvider = {
 
     const quotes = result.quotes ?? [];
     return quotes
-      .filter((q) => q.symbol && (q.quoteType === "EQUITY" || q.quoteType === "ETF"))
+      .filter(
+        (q) =>
+          q.symbol &&
+          (q.quoteType === "EQUITY" || q.quoteType === "ETF" || q.quoteType === "INDEX"),
+      )
       .map<SearchMatch>((q) => {
+        if (q.quoteType === "INDEX") {
+          return {
+            symbol: q.symbol!,
+            name: q.longname ?? q.shortname ?? q.symbol!,
+            exchange: "INDEX",
+            currency: q.currency ?? null,
+            isSupported: true,
+            isIndex: true,
+          };
+        }
         const ex = normalizeYahooExchange(q.exchange);
         return {
           symbol: q.symbol!,
@@ -262,6 +276,7 @@ export const yahooProvider: MarketDataProvider = {
           exchange: ex.label,
           currency: q.currency ?? null,
           isSupported: ex.supported,
+          isIndex: false,
         };
       });
   },
@@ -304,6 +319,7 @@ export const yahooProvider: MarketDataProvider = {
           exchange: ex.label,
           currency: q.currency ?? null,
           isSupported: ex.supported,
+          isIndex: false,
         };
       });
   },
@@ -444,6 +460,7 @@ async function runIndianScreen(id: ScreenId, count: number): Promise<SearchMatch
     exchange: "NSE",
     currency: r.currency,
     isSupported: true,
+    isIndex: false,
   }));
 }
 
